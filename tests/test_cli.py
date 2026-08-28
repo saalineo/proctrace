@@ -135,6 +135,12 @@ class TestCmdDump:
         assert rc == 1
         assert "Permission denied" in capsys.readouterr().err
 
+    def test_dump_negative_pid_returns_1(self, capsys):
+        args = _ns("dump", pid=-1, signal="SIGUSR1")
+        rc = cmd_dump(args)
+        assert rc == 1
+        assert "Invalid PID" in capsys.readouterr().err
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # cmd_watch
@@ -161,6 +167,12 @@ class TestCmdWatch:
         assert rc == 0
         assert "exited" in capsys.readouterr().err
 
+    def test_watch_negative_pid_returns_1(self, capsys):
+        args = _ns("watch", pid=-5, interval=0.05, duration=1.0)
+        rc = cmd_watch(args)
+        assert rc == 1
+        assert "Invalid PID" in capsys.readouterr().err
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # _read_proc_mem
@@ -175,6 +187,10 @@ class TestReadProcMem:
     def test_dead_pid_raises(self):
         with pytest.raises(ProcessLookupError):
             _read_proc_mem(99999999)
+
+    def test_negative_pid_raises(self):
+        with pytest.raises(ProcessLookupError):
+            _read_proc_mem(-1)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

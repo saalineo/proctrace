@@ -106,7 +106,10 @@ class AsyncProbeWrapper:
         self._store = store
         self._storage = _ProbeResultStorage()
         functools.update_wrapper(self, fn)
-        inspect.markcoroutinefunction(self)
+        if hasattr(inspect, "markcoroutinefunction"):
+            inspect.markcoroutinefunction(self)
+        else:
+            self._is_coroutine = getattr(asyncio.coroutines, "_is_coroutine", True)
 
     async def __call__(self, *args, **kwargs):
         watcher = ResourceWatcher(

@@ -59,6 +59,10 @@ def cmd_dump(args: argparse.Namespace) -> int:
         print(f"Unknown signal: {sig_name}", file=sys.stderr)
         return 1
 
+    if args.pid <= 0:
+        print(f"[proctrace] Invalid PID: {args.pid}", file=sys.stderr)
+        return 1
+
     try:
         os.kill(args.pid, sig_num)
         print(f"[proctrace] Sent {sig_name} to pid {args.pid}. Check that process's stderr.", file=sys.stderr)
@@ -73,6 +77,9 @@ def cmd_dump(args: argparse.Namespace) -> int:
 
 def cmd_watch(args: argparse.Namespace) -> int:
     pid = args.pid
+    if pid <= 0:
+        print(f"[proctrace] Invalid PID: {pid}", file=sys.stderr)
+        return 1
     interval = args.interval
     duration = args.duration
     deadline = time.monotonic() + duration
@@ -93,12 +100,14 @@ def cmd_watch(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        print(file=sys.stderr)  
+        print(file=sys.stderr)
 
     return 0
 
 
 def _read_proc_mem(pid: int) -> tuple[float, float]:
+    if pid <= 0:
+        raise ProcessLookupError(pid)
     if sys.platform == "linux":
         try:
             status = open(f"/proc/{pid}/status").read()
