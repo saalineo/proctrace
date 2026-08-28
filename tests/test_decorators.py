@@ -72,3 +72,56 @@ class TestAsyncDecorator:
 
         with pytest.raises(ValueError, match="deliberate"):
             asyncio.run(failing())
+
+    def test_thread_safety_isolation(self):
+        import threading
+        import time
+
+        results = {}
+
+        @probe(output="none")
+        def slow_fn(name, duration):
+            time.sleep(duration)
+            return name
+
+        def run_thread(name, duration):
+            slow_fn(name, duration)
+            # Store the result retrieved in this thread
+            results[name] = slow_fn.last_probe_result
+
+        t1 = threading.Thread(target=run_thread, args=("A", 0.05))
+        t2 = threading.Thread(target=run_thread, args=("B", 0.01))
+
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        # They should both have captured distinct probe results
+        assert results["A"] is not None
+        assert results["B"] is not None
+        assert results["A"] is not results["B"]
+
+    @pytest.mark.asyncio
+    async def test_async_task_safety_isolation(self):
+        import asyncio
+
+        results = {}
+
+        @probe(output="none")
+        async def slow_async_fn(name, duration):
+            await asyncio.sleep(duration)
+            return name
+
+        async def run_task(name, duration):
+            await slow_async_fn(name, duration)
+            results[name] = slow_async_fn.last_probe_result
+
+        await asyncio.gather(
+            run_task("A", 0.05),
+            run_task("B", 0.01)
+        )
+
+        assert results["A"] is not None
+        assert results["B"] is not None
+        assert results["A"] is not results["B"]
