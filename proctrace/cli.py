@@ -22,12 +22,32 @@ def cmd_run(args: argparse.Namespace) -> int:
     t_start = time.monotonic_ns()
 
     proc = subprocess.Popen(args.command)
+
+    peak_rss_bytes = 0
+    target_rss_bytes = 0
+
+    while proc.poll() is None:
+        try:
+            rss_mb, _ = _read_proc_mem(proc.pid)
+            rss_b = int(rss_mb * 1024 * 1024)
+            if rss_b > peak_rss_bytes:
+                peak_rss_bytes = rss_b
+            target_rss_bytes = rss_b
+        except (ProcessLookupError, OSError):
+            pass
+        time.sleep(0.005)
+
     proc.wait()
 
     elapsed_ns = time.monotonic_ns() - t_start
     our_after = snapshot_resources()
 
-    rss_delta = our_after.rss_bytes - our_before.rss_bytes
+    if peak_rss_bytes > 0:
+        rss_delta = peak_rss_bytes
+    elif target_rss_bytes > 0:
+        rss_delta = target_rss_bytes
+    else:
+        rss_delta = our_after.rss_bytes - our_before.rss_bytes
 
     if args.json:
         result = {
