@@ -101,3 +101,13 @@ def test_ipc_socket_tracing():
     finally:
         s1.close()
         s2.close()
+
+
+def test_fionread_opcode():
+    from proctrace.ipc import _FIONREAD
+    import sys
+    if sys.platform == "darwin":
+        assert _FIONREAD == 0x4004667F
+    else:
+        assert _FIONREAD == 0x541B
+

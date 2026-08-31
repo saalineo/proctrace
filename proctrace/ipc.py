@@ -4,8 +4,15 @@ import fcntl
 import os
 import socket as _socket
 import struct
+import sys
 import time
 from typing import TYPE_CHECKING, Any
+
+try:
+    import termios
+    _FIONREAD = getattr(termios, "FIONREAD", 0x4004667F if sys.platform == "darwin" else 0x541B)
+except ImportError:
+    _FIONREAD = 0x4004667F if sys.platform == "darwin" else 0x541B
 
 if TYPE_CHECKING:
     from typing import Self
@@ -127,9 +134,8 @@ class TracedSocket:
     def recv(self, bufsize: int, flags: int = 0) -> bytes:
         # Query how many bytes are in the kernel receive buffer BEFORE recv
         try:
-            FIONREAD = 0x541B  # Linux ioctl constant
             buf = struct.pack("I", 0)
-            result = fcntl.ioctl(self._sock.fileno(), FIONREAD, buf)
+            result = fcntl.ioctl(self._sock.fileno(), _FIONREAD, buf)
             waiting = struct.unpack("I", result)[0]
             # Calculate utilization: what fraction of bufsize is already waiting
             pct = min(100, int(waiting * 100 / bufsize)) if bufsize > 0 else 0
