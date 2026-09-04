@@ -1,16 +1,23 @@
 use pyo3::prelude::*;
+use std::sync::atomic::{AtomicI32, Ordering};
 
-static PIPE_WRITE_FD: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(-1);
+const MAX_SIGNALS: usize = 128;
 
-extern "C" fn handle_signal(_signum: libc::c_int) {      //c signale handler  
-    let fd = PIPE_WRITE_FD.load(std::sync::atomic::Ordering::Relaxed);
-    if fd >= 0 {
-        unsafe {
-            libc::write(fd, b"\x01".as_ptr() as *const libc::c_void, 1);
+#[allow(clippy::declare_interior_mutable_const)]
+const INIT_FD: AtomicI32 = AtomicI32::new(-1);
+static PIPE_WRITE_FDS: [AtomicI32; MAX_SIGNALS] = [INIT_FD; MAX_SIGNALS];
+
+extern "C" fn handle_signal(signum: libc::c_int) {
+    if signum >= 0 && (signum as usize) < MAX_SIGNALS {
+        let fd = PIPE_WRITE_FDS[signum as usize].load(Ordering::Relaxed);
+        if fd >= 0 {
+            unsafe {
+                libc::write(fd, b"\x01".as_ptr() as *const libc::c_void, 1);
+            }
         }
     }
 }
+
 fn create_nonblocking_pipe() -> std::io::Result<(i32, i32)> {
     let mut fds = [0i32; 2];
 
@@ -42,30 +49,74 @@ fn create_nonblocking_pipe() -> std::io::Result<(i32, i32)> {
 
 #[pyfunction]
 pub fn register_signal_pipe(signal_num: i32) -> PyResult<(i32, i32)> {
+    if signal_num <= 0 || (signal_num as usize) >= MAX_SIGNALS {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid signal number: {signal_num} (must be 1..{MAX_SIGNALS})"
+        )));
+    }
+
     let (read_fd, write_fd) = create_nonblocking_pipe().map_err(|e| {
         pyo3::exceptions::PyOSError::new_err(format!("pipe failed: {e}"))
     })?;
 
-    // Store write_fd in the static so the signal handler can use it
-    PIPE_WRITE_FD.store(write_fd, std::sync::atomic::Ordering::SeqCst);
+    let sig_idx = signal_num as usize;
+    let old_fd = PIPE_WRITE_FDS[sig_idx].swap(write_fd, Ordering::SeqCst);
+    if old_fd >= 0 {
+        unsafe {
+            libc::close(old_fd);
+        }
+    }
 
-    let action = libc::sigaction {                  //C handler for the given signal
+    let action = libc::sigaction {
         sa_sigaction: handle_signal as *const () as libc::sighandler_t,
         sa_mask: unsafe { std::mem::zeroed() },
-        sa_flags: libc::SA_RESTART, // restart syscalls interrupted by the signal
+        sa_flags: libc::SA_RESTART,
         #[cfg(target_os = "linux")]
         sa_restorer: None,
     };
 
-    let ret = unsafe {                                                                    
-        libc::sigaction(signal_num, &action, std::ptr::null_mut()) // signal_num is a valid signal number
+    let ret = unsafe {
+        libc::sigaction(signal_num, &action, std::ptr::null_mut())
     };
 
     if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        let stored = PIPE_WRITE_FDS[sig_idx].swap(-1, Ordering::SeqCst);
+        if stored >= 0 {
+            unsafe {
+                libc::close(stored);
+            }
+        }
+        unsafe {
+            libc::close(read_fd);
+        }
         return Err(pyo3::exceptions::PyOSError::new_err(
-            format!("sigaction failed: {}", std::io::Error::last_os_error())
+            format!("sigaction failed: {err}")
         ));
     }
 
     Ok((read_fd, write_fd))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_nonblocking_pipe() {
+        let (r, w) = create_nonblocking_pipe().unwrap();
+        assert!(r >= 0);
+        assert!(w >= 0);
+        unsafe {
+            libc::close(r);
+            libc::close(w);
+        }
+    }
+
+    #[test]
+    fn test_invalid_signal_num() {
+        assert!(register_signal_pipe(0).is_err());
+        assert!(register_signal_pipe(-1).is_err());
+        assert!(register_signal_pipe(200).is_err());
+    }
 }
