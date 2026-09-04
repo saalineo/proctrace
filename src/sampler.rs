@@ -24,29 +24,20 @@ impl BackgroundSampler {
     }
 
     pub fn start(&mut self, interval_ms: u64) {
-        // 50ms to 500ms (High to low overhead)
-        self.stop_flag.store(false, Ordering::SeqCst); // reseting for state reuse
+        if self.handle.is_some() {
+            self.stop();
+        }
+        self.stop_flag.store(false, Ordering::SeqCst);
         self.peak_rss.store(0, Ordering::SeqCst);
 
         let stop = Arc::clone(&self.stop_flag);
         let peak = Arc::clone(&self.peak_rss);
-        let interval = Duration::from_millis(interval_ms);
+        let interval = Duration::from_millis(interval_ms.max(1));
 
         self.handle = Some(thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
                 if let Ok(snap) = snapshot() {
-                    let mut current = peak.load(Ordering::Relaxed);
-                    while snap.rss_bytes > current {
-                        match peak.compare_exchange_weak(
-                            current,
-                            snap.rss_bytes,
-                            Ordering::SeqCst,
-                            Ordering::Relaxed,
-                        ) {
-                            Ok(_) => break,
-                            Err(actual) => current = actual,
-                        }
-                    }
+                    peak.fetch_max(snap.rss_bytes, Ordering::Relaxed);
                 }
                 thread::sleep(interval);
             }
@@ -54,12 +45,61 @@ impl BackgroundSampler {
     }
 
     pub fn stop(&mut self) -> u64 {
-        //sampler will stop and return peak rss
         self.stop_flag.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
-            //thread joining for peak rss written purpose
             let _ = handle.join();
         }
         self.peak_rss.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for BackgroundSampler {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sampler_start_stop() {
+        let mut sampler = BackgroundSampler::new();
+        sampler.start(10);
+        thread::sleep(Duration::from_millis(50));
+        let peak = sampler.stop();
+        assert!(peak > 0);
+    }
+
+    #[test]
+    fn test_sampler_restart_without_leak() {
+        let mut sampler = BackgroundSampler::new();
+        sampler.start(10);
+        sampler.start(10);
+        thread::sleep(Duration::from_millis(20));
+        let peak = sampler.stop();
+        assert!(peak > 0);
+    }
+
+    #[test]
+    fn test_sampler_zero_interval_does_not_panic() {
+        let mut sampler = BackgroundSampler::new();
+        sampler.start(0);
+        thread::sleep(Duration::from_millis(20));
+        let peak = sampler.stop();
+        assert!(peak > 0);
+    }
+
+    #[test]
+    fn test_sampler_drop_cleans_up_thread() {
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        {
+            let mut sampler = BackgroundSampler::new();
+            sampler.stop_flag = Arc::clone(&stop_flag);
+            sampler.start(10);
+            assert!(!stop_flag.load(Ordering::SeqCst));
+        }
+        assert!(stop_flag.load(Ordering::SeqCst));
     }
 }
