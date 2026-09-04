@@ -111,3 +111,42 @@ def test_fionread_opcode():
     else:
         assert _FIONREAD == 0x541B
 
+
+def test_registry_weakref_cleanup():
+    import gc
+    _registry.clear()
+
+    q = queue.Queue()
+    tq = proctrace.trace_ipc(q, name="temporary_queue")
+    assert len(_registry) == 1
+    assert "temporary_queue" in proctrace.ipc_report()
+
+    # Drop references to tq and force garbage collection
+    del tq
+    del q
+    gc.collect()
+
+    assert len(_registry) == 0
+    assert proctrace.ipc_report() == "(no IPC channels traced)"
+
+
+def test_bounded_tracking_memory_safety():
+    _registry.clear()
+    q = queue.Queue()
+    # Test TracedQueue with small bounded capacity
+    tq = proctrace.trace_ipc(q, name="bounded_queue", ring_capacity=5)
+    for i in range(100):
+        tq.put(i)
+    assert len(tq._put_times) == 5
+
+    r_fd, w_fd = os.pipe()
+    try:
+        tp = proctrace.trace_pipe(r_fd, w_fd, name="bounded_pipe", ring_capacity=5)
+        for _ in range(100):
+            tp.write(b"x")
+        assert len(tp._write_times) == 5
+    finally:
+        os.close(r_fd)
+        os.close(w_fd)
+
+

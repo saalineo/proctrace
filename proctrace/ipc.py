@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 import fcntl
 import os
 import socket as _socket
@@ -7,6 +8,7 @@ import struct
 import sys
 import time
 from typing import TYPE_CHECKING, Any
+import weakref
 
 try:
     import termios
@@ -19,11 +21,11 @@ if TYPE_CHECKING:
 
 from proctrace._proctrace_core import IpcStats
 
-_registry: list[Any] = []
+_registry: weakref.WeakSet[Any] = weakref.WeakSet()
 
 
 def _register(stats: Any) -> Any:
-    _registry.append(stats)
+    _registry.add(stats)
     return stats
 
 
@@ -36,15 +38,15 @@ def ipc_report() -> str:
 class TracedQueue:
     __slots__ = ("_q", "_stats", "_put_times")
 
-    def __init__(self, queue: Any, stats: IpcStats) -> None:
+    def __init__(self, queue: Any, stats: IpcStats, max_tracked: int = 1024) -> None:
         self._q = queue
         self._stats = stats
-        self._put_times: dict[int, int] = {}
+        self._put_times: deque[int] = deque(maxlen=max_tracked)
 
     def put(self, item: Any, block: bool = True, timeout: float | None = None) -> None:
         t_put_ns = time.monotonic_ns()
         self._q.put(item, block=block, timeout=timeout)
-        self._put_times[id(item)] = t_put_ns
+        self._put_times.append(t_put_ns)
 
         try:
             self._stats.record_depth(self._q.qsize())
@@ -58,8 +60,8 @@ class TracedQueue:
         item = self._q.get(block=block, timeout=timeout)
         t_get_ns = time.monotonic_ns()
 
-        t_put_ns = self._put_times.pop(id(item), None)
-        if t_put_ns is not None:
+        if self._put_times:
+            t_put_ns = self._put_times.popleft()
             latency_us = (t_get_ns - t_put_ns) // 1000
             self._stats.record_latency_us(latency_us)
 
@@ -79,11 +81,11 @@ class TracedQueue:
 class TracedPipe:
     __slots__ = ("read_fd", "write_fd", "_stats", "_write_times")
 
-    def __init__(self, read_fd: int, write_fd: int, stats: IpcStats) -> None:
+    def __init__(self, read_fd: int, write_fd: int, stats: IpcStats, max_tracked: int = 1024) -> None:
         self.read_fd = read_fd
         self.write_fd = write_fd
         self._stats = stats
-        self._write_times: list[int] = []
+        self._write_times: deque[int] = deque(maxlen=max_tracked)
 
     def write(self, data: bytes) -> int:
         t_write_ns = time.monotonic_ns()
@@ -95,7 +97,7 @@ class TracedPipe:
         data = os.read(self.read_fd, n)
         t_read_ns = time.monotonic_ns()
         if self._write_times:
-            t_write_ns = self._write_times.pop(0)
+            t_write_ns = self._write_times.popleft()
             latency_us = (t_read_ns - t_write_ns) // 1000
             self._stats.record_latency_us(latency_us)
         return data
@@ -164,7 +166,7 @@ def trace_ipc(queue: Any, name: str = "", ring_capacity: int = 1024) -> TracedQu
     channel_name = name or repr(queue)[:40]
     stats = IpcStats(channel_name, ring_capacity)
     _register(stats)
-    return TracedQueue(queue, stats)
+    return TracedQueue(queue, stats, max_tracked=ring_capacity)
 
 
 def trace_pipe(
@@ -176,7 +178,7 @@ def trace_pipe(
     channel_name = name or f"pipe({read_fd},{write_fd})"
     stats = IpcStats(channel_name, ring_capacity)
     _register(stats)
-    return TracedPipe(read_fd, write_fd, stats)
+    return TracedPipe(read_fd, write_fd, stats, max_tracked=ring_capacity)
 
 
 def trace_socket(

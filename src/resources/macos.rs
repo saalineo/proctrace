@@ -4,7 +4,9 @@ use crate::resources::ResourceSnapshot;
 
 fn count_open_fds() -> Result<u32, ProctraceError> {
     // proc_pidinfo(PROC_PIDLISTFDS) rejects a NULL buffer, so query with a
-    // real buffer and grow it by doubling on ENOMEM until the table fits.
+    // real buffer and grow it by doubling until the table fits.
+    // Note: when the buffer is full (ret == capacity * entry_size), proc_pidinfo
+    // truncates output without returning ENOMEM, so we must check if ret < capacity * entry_size.
     let entry_size = std::mem::size_of::<libc::proc_fdinfo>() as i32;
     let mut buf: Vec<libc::proc_fdinfo> = Vec::new();
     let mut capacity: i32 = 256;
@@ -23,14 +25,20 @@ fn count_open_fds() -> Result<u32, ProctraceError> {
             )
         };
         if ret > 0 {
-            return Ok((ret / entry_size) as u32);
-        }
-        let err = std::io::Error::last_os_error();
-        if err.raw_os_error() != Some(libc::ENOMEM) {
-            return Err(ProctraceError::MacosSyscall {
-                call: "PROC_PIDLISTFDS",
-                source: err,
-            });
+            let buffer_bytes = capacity * entry_size;
+            if ret < buffer_bytes {
+                return Ok((ret / entry_size) as u32);
+            }
+        } else if ret == 0 {
+            return Ok(0);
+        } else {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() != Some(libc::ENOMEM) {
+                return Err(ProctraceError::MacosSyscall {
+                    call: "PROC_PIDLISTFDS",
+                    source: err,
+                });
+            }
         }
         capacity = capacity.saturating_mul(2);
         if capacity > 65536 {

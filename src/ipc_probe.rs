@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
-#[pyclass]
+#[pyclass(weakref)]
 pub struct IpcStats {
     name: String,
     latency_ring: Mutex<VecDeque<u64>>,
@@ -91,7 +91,7 @@ impl IpcStats {
 }
 
 /// Statistics for a traced socket channel.
-#[pyclass]
+#[pyclass(weakref)]
 pub struct SocketStats {
     name: String,
     bytes_sent: AtomicU64,
