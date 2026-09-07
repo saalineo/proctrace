@@ -122,15 +122,14 @@ class ResourceWatcher:
             if (snapshot_after and before)
             else 0
         )
-        fd_delta = (
-            (snapshot_after.open_fds - before.open_fds)
-            if (snapshot_after and before)
-            else 0
-        )
-
         fds_before_set = set(self._fds_before)
         fds_after_set = set(fds_after)
         leaked_fds = sorted(fds_after_set - fds_before_set)
+        # Use the same before/after descriptor view as leak detection.  On
+        # macOS, the point-in-time count in ResourceSnapshot can include
+        # transient runtime-owned descriptors that are not present in either
+        # path listing, producing unstable deltas.
+        fd_delta = len(fds_after) - len(self._fds_before) if self.fds else 0
 
         threads_before_set = set(self._threads_before)
         new_thread_names = [

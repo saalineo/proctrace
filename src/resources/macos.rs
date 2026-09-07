@@ -2,7 +2,7 @@ use crate::error::ProctraceError;
 use crate::resources::now_ns;
 use crate::resources::ResourceSnapshot;
 
-fn count_open_fds() -> Result<u32, ProctraceError> {
+fn list_fd_info() -> Result<Vec<libc::proc_fdinfo>, ProctraceError> {
     // proc_pidinfo(PROC_PIDLISTFDS) rejects a NULL buffer, so query with a
     // real buffer and grow it by doubling until the table fits.
     // Note: when the buffer is full (ret == capacity * entry_size), proc_pidinfo
@@ -27,10 +27,11 @@ fn count_open_fds() -> Result<u32, ProctraceError> {
         if ret > 0 {
             let buffer_bytes = capacity * entry_size;
             if ret < buffer_bytes {
-                return Ok((ret / entry_size) as u32);
+                buf.truncate((ret / entry_size) as usize);
+                return Ok(buf);
             }
         } else if ret == 0 {
-            return Ok(0);
+            return Ok(Vec::new());
         } else {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() != Some(libc::ENOMEM) {
@@ -48,6 +49,10 @@ fn count_open_fds() -> Result<u32, ProctraceError> {
             });
         }
     }
+}
+
+fn count_open_fds() -> Result<u32, ProctraceError> {
+    Ok(list_fd_info()?.len() as u32)
 }
 
 pub fn snapshot() -> Result<ResourceSnapshot, ProctraceError> {
@@ -82,11 +87,14 @@ pub fn snapshot() -> Result<ResourceSnapshot, ProctraceError> {
 
 pub fn list_fd_paths() -> Result<Vec<String>, ProctraceError> {
     let mut paths = Vec::new();
-    for fd in 0..4096 {
+    for fd_info in list_fd_info()? {
+        let fd = fd_info.proc_fd;
         let mut buf = vec![0u8; libc::PATH_MAX as usize];
         let ret = unsafe {
             // SAFETY: `buf` is a writable buffer of PATH_MAX bytes, which is
-            // exactly what F_GETPATH writes; fcntl fails harmlessly on closed fds.
+            // exactly what F_GETPATH writes. The descriptor came from
+            // PROC_PIDLISTFDS, so this avoids probing closed descriptors and
+            // also handles descriptors above 4095.
             libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr())
         };
         if ret == 0 {
