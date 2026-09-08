@@ -60,6 +60,20 @@ class TestFdTracking:
         assert probe.result.fd_delta == 0
         assert len(probe.result.leaked_fds) == 0
 
+    def test_duplicate_fd_leak_detection(self, tmp_path):
+        target = tmp_path / "dup.txt"
+        base_file = open(target, "w")
+
+        with proctrace.watch(memory=False, fds=True, threads=False) as probe:
+            dup_leaked = [open(target, "r") for _ in range(3)]
+
+        assert probe.result.fd_delta >= 3
+        assert len(probe.result.leaked_fds) >= 3
+        assert probe.result.leaked_fds.count(str(target)) == 3
+
+        for f in [base_file] + dup_leaked:
+            f.close()
+
 
 class TestThreadTracking:
     def test_thread_delta_detected(self):

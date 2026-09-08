@@ -4,6 +4,7 @@ import os
 import subprocess
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -122,9 +123,8 @@ class ResourceWatcher:
             if (snapshot_after and before)
             else 0
         )
-        fds_before_set = set(self._fds_before)
-        fds_after_set = set(fds_after)
-        leaked_fds = sorted(fds_after_set - fds_before_set)
+        leaked_counter = Counter(fds_after) - Counter(self._fds_before)
+        leaked_fds = sorted(leaked_counter.elements())
         # Use the same before/after descriptor view as leak detection.  On
         # macOS, the point-in-time count in ResourceSnapshot can include
         # transient runtime-owned descriptors that are not present in either
