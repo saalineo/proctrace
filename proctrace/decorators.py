@@ -19,8 +19,8 @@ def probe(
     memory: bool = True,
     fds: bool = True,
     threads: bool = True,
-    children: bool = False,        
-    sample_interval: float = 0.05,  
+    children: bool = False,
+    sample_interval: float = 0.1,
     output: Literal["stderr", "none"] = "stderr",
     store: bool = True,
 ) -> Callable[[F], F]:

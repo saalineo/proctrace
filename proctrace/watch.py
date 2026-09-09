@@ -125,11 +125,20 @@ class ResourceWatcher:
         )
         leaked_counter = Counter(fds_after) - Counter(self._fds_before)
         leaked_fds = sorted(leaked_counter.elements())
-        # Use the same before/after descriptor view as leak detection.  On
+        # Use the same before/after descriptor view as leak detection. On
         # macOS, the point-in-time count in ResourceSnapshot can include
         # transient runtime-owned descriptors that are not present in either
-        # path listing, producing unstable deltas.
-        fd_delta = len(fds_after) - len(self._fds_before) if self.fds else 0
+        # path listing, producing unstable deltas. When leaks are identified,
+        # ensure fd_delta accurately reflects at least the detected leaked fds.
+        # When no leaks are present (len(leaked_fds) == 0), avoid spurious negative
+        # deltas caused by transient background descriptors closing.
+        raw_fd_delta = len(fds_after) - len(self._fds_before) if self.fds else 0
+        if not self.fds:
+            fd_delta = 0
+        elif leaked_fds:
+            fd_delta = max(raw_fd_delta, len(leaked_fds))
+        else:
+            fd_delta = max(0, raw_fd_delta)
 
         threads_before_set = set(self._threads_before)
         new_thread_names = [
