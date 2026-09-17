@@ -31,9 +31,28 @@ class TestPytestPlugin:
             entry = json.loads(line)
             assert "rss_delta_mb" in entry
             assert "elapsed_ms" in entry
+            assert "sample_interval_ms" in entry
+            assert entry["sample_interval_ms"] == 100
         labels = {json.loads(line)["label"] for line in lines}
         assert any(labels)  # each entry labeled with a test nodeid
 
+    def test_custom_interval_flag(self, pytester, tmp_path):
+        out = tmp_path / "out.jsonl"
+        pytester.makepyfile("def test_custom(): assert True\n")
+        result = pytester.runpytest(
+            "--proctrace",
+            "--proctrace-output",
+            str(out),
+            "--proctrace-interval",
+            "0.05",
+        )
+        assert result.ret == 0
+
+        lines = out.read_text().splitlines()
+        assert len(lines) == 1
+        entry = json.loads(lines[0])
+        assert entry["sample_interval_ms"] == 50
+
     def test_help_lists_options(self, pytester):
         result = pytester.runpytest("--help")
-        result.stdout.fnmatch_lines(["*--proctrace*", "*--proctrace-output*"])
+        result.stdout.fnmatch_lines(["*--proctrace*", "*--proctrace-output*", "*--proctrace-interval*"])

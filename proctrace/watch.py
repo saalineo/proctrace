@@ -39,6 +39,22 @@ def _count_children() -> int:  # child process counting
             return 0
 
 
+DEFAULT_SAMPLE_INTERVAL = 0.1  # seconds
+
+
+def get_default_sample_interval() -> float:
+    """Get the default sampling interval in seconds, honoring PROCTRACE_SAMPLE_INTERVAL if set."""
+    env_val = os.environ.get("PROCTRACE_SAMPLE_INTERVAL")
+    if env_val:
+        try:
+            val = float(env_val)
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+    return DEFAULT_SAMPLE_INTERVAL
+
+
 class ResourceWatcher:
     def __init__(
         self,
@@ -46,13 +62,19 @@ class ResourceWatcher:
         fds: bool = True,
         threads: bool = True,
         children: bool = True,
-        sample_interval: float = 0.1,
+        sample_interval: float | None = None,
     ) -> None:
         self.memory = memory
         self.fds = fds
         self.threads = threads
         self.children = children
-        self.sample_interval_ms = int(sample_interval * 1000)
+        resolved_interval = (
+            sample_interval
+            if sample_interval is not None
+            else get_default_sample_interval()
+        )
+        self.sample_interval = resolved_interval
+        self.sample_interval_ms = max(1, int(resolved_interval * 1000))
 
         # State set by __enter__
         self._snapshot_before: ResourceSnapshot | None = None
@@ -159,6 +181,7 @@ class ResourceWatcher:
             elapsed_ns=elapsed_ns,
             leaked_fds=leaked_fds,
             new_thread_names=new_thread_names,
+            sample_interval_ms=self.sample_interval_ms,
         )
 
         if self.on_exit is not None:
@@ -180,7 +203,7 @@ def watch(
     fds: bool = True,
     threads: bool = True,
     children: bool = True,
-    sample_interval: float = 0.1,
+    sample_interval: float | None = None,
 ) -> ResourceWatcher:
     return ResourceWatcher(
         memory=memory,

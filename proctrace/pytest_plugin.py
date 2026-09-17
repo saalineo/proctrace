@@ -23,6 +23,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         metavar="PATH",
         help="Write per-test ResourceDelta as JSONL to this path",
     )
+    group.addoption(
+        "--proctrace-interval",
+        default=None,
+        type=float,
+        metavar="SECONDS",
+        help="Background sampler interval in seconds (default: 0.1s or PROCTRACE_SAMPLE_INTERVAL)",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -34,6 +41,7 @@ class ProctracePlugin:
     def __init__(self, config: pytest.Config) -> None:
         self.config = config
         self.output_path = config.getoption("--proctrace-output", default=None)
+        self.interval = config.getoption("--proctrace-interval", default=None)
         self._results: list[dict[str, Any]] = []
         self._current_watcher: ResourceWatcher | None = None
         self._logger: ProctraceLogger | None = None
@@ -47,7 +55,12 @@ class ProctracePlugin:
     def pytest_runtest_call(self, item: pytest.Item):
         from proctrace.watch import ResourceWatcher
 
-        watcher = ResourceWatcher(memory=True, fds=True, threads=True)
+        watcher = ResourceWatcher(
+            memory=True,
+            fds=True,
+            threads=True,
+            sample_interval=self.interval,
+        )
         self._current_watcher = watcher
 
         with watcher:

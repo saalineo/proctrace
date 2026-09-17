@@ -17,6 +17,17 @@ class ResourceDelta:
     elapsed_ns: int  # wall clock time of the watched block in nanoseconds
     leaked_fds: list[str]  # fds present at exit but NOT at entry
     new_thread_names: list[str]  # names of threads created during the block
+    sample_interval_ms: int = 100  # background sampler interval in milliseconds
+
+    @property
+    def sample_interval_s(self) -> float:
+        return self.sample_interval_ms / 1000.0
+
+    def is_comparable_with(self, other: ResourceDelta) -> bool:
+        """Check if another ResourceDelta was measured using the same sample rate."""
+        if not isinstance(other, ResourceDelta):
+            return False
+        return self.sample_interval_ms == other.sample_interval_ms
 
     @property
     def rss_delta_mb(self) -> float:

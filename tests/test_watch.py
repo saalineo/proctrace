@@ -29,7 +29,12 @@ class TestMemoryTracking:
     def test_small_allocation_has_small_delta(self):
         with proctrace.watch(memory=True, fds=False, threads=False) as probe:
             _ = [1, 2, 3]
-        assert abs(probe.result.rss_delta_mb) < 5.0
+
+        # A tiny allocation must not produce a significant RSS increase.
+        # RSS may decrease because of allocator and OS reclamation behavior.
+        assert probe.result.rss_delta_bytes < 5 * 1024 * 1024, (
+            f"Unexpected RSS increase: {probe.result.rss_delta_mb:.1f}MB"
+        )
 
     def test_elapsed_is_positive(self):
         with proctrace.watch() as probe:
@@ -122,3 +127,27 @@ class TestResultType:
         restored = ResourceDelta.from_dict(d)
         assert restored.rss_delta_bytes == probe.result.rss_delta_bytes
         assert restored.elapsed_ns == probe.result.elapsed_ns
+        assert restored.sample_interval_ms == probe.result.sample_interval_ms
+
+    def test_sample_interval_tracking_and_comparability(self):
+        with proctrace.watch(sample_interval=0.05) as p50:
+            pass
+        with proctrace.watch(sample_interval=0.1) as p100:
+            pass
+        with proctrace.watch(sample_interval=0.05) as p50_second:
+            pass
+
+        assert p50.result.sample_interval_ms == 50
+        assert p50.result.sample_interval_s == 0.05
+        assert p100.result.sample_interval_ms == 100
+        assert p100.result.sample_interval_s == 0.1
+
+        assert p50.result.is_comparable_with(p50_second.result)
+        assert not p50.result.is_comparable_with(p100.result)
+
+    def test_env_var_sample_interval_override(self, monkeypatch):
+        monkeypatch.setenv("PROCTRACE_SAMPLE_INTERVAL", "0.025")
+        with proctrace.watch() as probe:
+            pass
+        assert probe.result.sample_interval_ms == 25
+        assert probe.result.sample_interval_s == 0.025

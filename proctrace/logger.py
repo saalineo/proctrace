@@ -50,6 +50,7 @@ class ProctraceLogger:
             "thread_delta": delta.thread_delta,
             "elapsed_ms": round(delta.elapsed_ms, 2),
             "leaked_fds": delta.leaked_fds,
+            "sample_interval_ms": delta.sample_interval_ms,
         }
 
         if self.format == "jsonl":

@@ -20,7 +20,7 @@ def probe(
     fds: bool = True,
     threads: bool = True,
     children: bool = False,
-    sample_interval: float = 0.1,
+    sample_interval: float | None = None,
     output: Literal["stderr", "none"] = "stderr",
     store: bool = True,
 ) -> Callable[[F], F]:

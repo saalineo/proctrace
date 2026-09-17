@@ -52,6 +52,16 @@ class TestSyncDecorator:
         fn(5)
         assert fn.last_probe_result is not None
 
+    def test_sample_interval_recorded(self):
+        @probe(sample_interval=0.05, output="none")
+        def fn():
+            return 123
+
+        fn()
+        assert fn.last_probe_result is not None
+        assert fn.last_probe_result.sample_interval_ms == 50
+        assert fn.last_probe_result.sample_interval_s == 0.05
+
 
 class TestAsyncDecorator:
     def test_async_function_decorated(self):

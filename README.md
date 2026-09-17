@@ -121,7 +121,7 @@ from proctrace.decorators import probe
     fds=True,
     threads=True,
     children=False,
-    sample_interval=0.05,
+    sample_interval=0.1,
     output="stderr",  # or "none"
     store=True,       # stores result on fn.last_probe_result
 )
