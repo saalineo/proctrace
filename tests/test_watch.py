@@ -6,7 +6,7 @@ import time
 from conftest import allocate_dirty_mb
 
 import proctrace
-from proctrace._types import ResourceDelta
+from proctrace.core import ResourceDelta
 
 
 class TestMemoryTracking:
