@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 
 class TestPytestPlugin:
@@ -55,4 +56,145 @@ class TestPytestPlugin:
 
     def test_help_lists_options(self, pytester):
         result = pytester.runpytest("--help")
-        result.stdout.fnmatch_lines(["*--proctrace*", "*--proctrace-output*", "*--proctrace-interval*"])
+        result.stdout.fnmatch_lines([
+            "*--proctrace*",
+            "*--proctrace-output*",
+            "*--proctrace-interval*",
+            "*--proctrace-baseline*",
+            "*--proctrace-update-baseline*",
+            "*--proctrace-fail-on-regression*",
+        ])
+
+    def test_marker_fails_on_fd_leak(self, pytester):
+        pytester.makepyfile("""
+            import pytest
+            import tempfile
+
+            leaked = []
+
+            @pytest.mark.proctrace(max_fd_delta=0)
+            def test_leaky():
+                f = tempfile.NamedTemporaryFile(delete=False)
+                leaked.append(f)
+        """)
+        result = pytester.runpytest()
+        result.assert_outcomes(failed=1)
+        result.stdout.fnmatch_lines(["*proctrace: leaked 1 fd(s)*"])
+
+    def test_marker_passes_when_clean(self, pytester):
+        pytester.makepyfile("""
+            import pytest
+
+            @pytest.mark.proctrace(max_fd_delta=0, max_threads=0)
+            def test_clean():
+                pass
+        """)
+        result = pytester.runpytest()
+        result.assert_outcomes(passed=1)
+
+    def test_marker_suppressed_by_allow_leaked(self, pytester):
+        pytester.makepyfile("""
+            import pytest
+            import tempfile
+
+            leaked = []
+
+            @pytest.mark.proctrace(max_fd_delta=0, allow_leaked=[r".*"])
+            def test_leaky_suppressed():
+                f = tempfile.NamedTemporaryFile(delete=False)
+                leaked.append(f)
+        """)
+        result = pytester.runpytest()
+        result.assert_outcomes(passed=1)
+
+    def test_fixture_assert_no_leaks(self, pytester):
+        pytester.makepyfile("""
+            import tempfile
+
+            def test_clean_probe(proctrace_probe):
+                with proctrace_probe.assert_no_leaks():
+                    x = 1 + 1
+
+            def test_leaky_probe(proctrace_probe):
+                leaked = []
+                with proctrace_probe.assert_no_leaks():
+                    f = tempfile.NamedTemporaryFile(delete=False)
+                    leaked.append(f)
+        """)
+        result = pytester.runpytest()
+        result.assert_outcomes(passed=1, failed=1)
+        result.stdout.fnmatch_lines(["*proctrace leak assertion failed*"])
+
+    def test_natural_failure_preserves_error(self, pytester):
+        pytester.makepyfile("""
+            import pytest
+            import tempfile
+
+            leaked = []
+
+            @pytest.mark.proctrace(max_fd_delta=0)
+            def test_fails_naturally():
+                f = tempfile.NamedTemporaryFile(delete=False)
+                leaked.append(f)
+                assert 1 == 2, "original_assertion_failure"
+        """)
+        result = pytester.runpytest()
+        result.assert_outcomes(failed=1)
+        result.stdout.fnmatch_lines([
+            "*original_assertion_failure*",
+            "*proctrace*",
+        ])
+
+    def test_baseline_creation_and_regression_failure(self, pytester, tmp_path, monkeypatch):
+        baseline = tmp_path / "baseline.json"
+        pytester.makepyfile("""
+            import mmap
+            import os
+            import pytest
+
+            def allocate_dirty_mb(n: int) -> mmap.mmap:
+                total = n * 1024 * 1024
+                region = mmap.mmap(-1, total)
+                for i in range(0, total, 4096):
+                    region[i] = 1
+                return region
+
+            pinned = []
+
+            @pytest.mark.proctrace()
+            def test_alloc():
+                size = int(os.environ.get("ALLOC_MB", "10"))
+                pinned.append(allocate_dirty_mb(size))
+        """)
+
+        # 1. Generate baseline
+        res1 = pytester.runpytest_subprocess(
+            "--proctrace",
+            "--proctrace-baseline",
+            str(baseline),
+            "--proctrace-update-baseline",
+        )
+        assert res1.ret == 0
+        assert baseline.is_file()
+
+        # 2. Run with same size -> passes
+        res2 = pytester.runpytest_subprocess(
+            "--proctrace",
+            "--proctrace-baseline",
+            str(baseline),
+            "--proctrace-fail-on-regression",
+            "10%",
+        )
+        res2.assert_outcomes(passed=1)
+
+        # 3. Run with large increase -> fails
+        monkeypatch.setenv("ALLOC_MB", "40")
+        res3 = pytester.runpytest_subprocess(
+            "--proctrace",
+            "--proctrace-baseline",
+            str(baseline),
+            "--proctrace-fail-on-regression",
+            "10%",
+        )
+        res3.assert_outcomes(failed=1)
+        res3.stdout.fnmatch_lines(["*peak RSS regressed*"])
