@@ -22,10 +22,9 @@ from pathlib import Path
 from conftest import allocate_dirty_mb
 
 import proctrace
-from proctrace.decorators import probe
+from proctrace.diagnostics import install_signal_handler
 from proctrace.ipc import ipc_report, trace_ipc, trace_pipe
-from proctrace.logger import ProctraceLogger
-from proctrace.snapshot import install_signal_handler
+from proctrace.telemetry import ProctraceLogger, probe
 
 
 class TestWatchIntegration:

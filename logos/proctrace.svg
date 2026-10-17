@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title desc">
+  <title id="title">proctrace logo</title>
+  <desc id="desc">Minimal modern abstract process telemetry reticle for proctrace</desc>
+
+  <!-- Outer Telemetry Caliper Arc (Top-Right) -->
+  <path fill="none" stroke="#0A0D14" stroke-width="26" stroke-linecap="round" d="
+    M 88 44
+    A 88 88 0 0 1 212 168
+  "/>
+
+  <!-- Outer Telemetry Caliper Arc (Bottom-Left) -->
+  <path fill="none" stroke="#0A0D14" stroke-width="26" stroke-linecap="round" d="
+    M 168 212
+    A 88 88 0 0 1 44 88
+  "/>
+
+  <!-- Active Telemetry Probe Ring (Signal Emerald) -->
+  <circle cx="128" cy="128" r="30" fill="none" stroke="#00F59B" stroke-width="12"/>
+
+  <!-- Central Telemetry Focal Point -->
+  <circle cx="128" cy="128" r="6" fill="#0A0D14"/>
+</svg>

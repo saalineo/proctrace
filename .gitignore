@@ -8,6 +8,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+docs
 .eggs/
 
 # maturin build output

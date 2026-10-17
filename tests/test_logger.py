@@ -4,8 +4,8 @@ import json
 import socket
 
 import proctrace
-from proctrace._types import ResourceDelta
-from proctrace.logger import ProctraceLogger
+from proctrace.core import ResourceDelta
+from proctrace.telemetry import ProctraceLogger
 
 
 def make_delta(rss_mb: float = 1.0) -> ResourceDelta:

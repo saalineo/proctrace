@@ -6,8 +6,8 @@ import sys
 
 import pytest
 
-from proctrace._types import ResourceDelta
-from proctrace.decorators import probe
+from proctrace.core import ResourceDelta
+from proctrace.telemetry import probe
 
 
 class TestSyncDecorator:
