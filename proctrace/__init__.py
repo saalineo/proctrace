@@ -20,6 +20,7 @@ from proctrace.core import (
     ResourceDelta,
     ResourceMonitoringError,
     SignalHandlingError,
+    Timeline,
 )
 from proctrace.diagnostics import (
     SignalHandlerHandle,
@@ -64,6 +65,7 @@ __all__ = [
     "ResourceWatcher",
     "SignalHandlerHandle",
     "SignalHandlingError",
+    "Timeline",
     "__version__",
     "help",
     "install_signal_handler",

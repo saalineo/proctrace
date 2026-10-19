@@ -59,6 +59,7 @@ class _BaseProbeWrapper:
         sample_interval: float | None,
         output: Literal["stderr", "none"],
         store: bool,
+        timeline: bool = False,
     ) -> None:
         self._fn = fn
         self._memory = memory
@@ -68,6 +69,7 @@ class _BaseProbeWrapper:
         self._sample_interval = sample_interval
         self._output = output
         self._store = store
+        self._timeline = timeline
         self._storage = _ProbeResultStorage()
         functools.update_wrapper(self, fn)
 
@@ -87,6 +89,7 @@ class _BaseProbeWrapper:
             threads=self._threads,
             children=self._children,
             sample_interval=self._sample_interval,
+            timeline=self._timeline,
         )
 
     def _publish_result(self, delta: ResourceDelta | None) -> None:
@@ -128,6 +131,7 @@ class AsyncProbeWrapper(_BaseProbeWrapper):
         sample_interval: float | None,
         output: Literal["stderr", "none"],
         store: bool,
+        timeline: bool = False,
     ) -> None:
         super().__init__(
             fn,
@@ -138,6 +142,7 @@ class AsyncProbeWrapper(_BaseProbeWrapper):
             sample_interval,
             output,
             store,
+            timeline=timeline,
         )
         if hasattr(inspect, "markcoroutinefunction"):
             inspect.markcoroutinefunction(self)
@@ -162,6 +167,7 @@ def probe(
     sample_interval: float | None = None,
     output: Literal["stderr", "none"] = "stderr",
     store: bool = True,
+    timeline: bool = False,
 ) -> Callable[[F], F]:
     """Decorator to monitor resource usage during function execution.
 
@@ -173,6 +179,7 @@ def probe(
         sample_interval: Sampler interval in seconds.
         output: Output mode ('stderr' or 'none').
         store: Whether to store the last result on function.last_probe_result.
+        timeline: Whether to record high-frequency time-series resource samples.
 
     Returns:
         Decorated function maintaining original signature and metadata.
@@ -189,6 +196,7 @@ def probe(
                 sample_interval=sample_interval,
                 output=output,
                 store=store,
+                timeline=timeline,
             )  # type: ignore
         else:
             return SyncProbeWrapper(
@@ -200,6 +208,7 @@ def probe(
                 sample_interval=sample_interval,
                 output=output,
                 store=store,
+                timeline=timeline,
             )  # type: ignore
 
     return decorator

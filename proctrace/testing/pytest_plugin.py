@@ -52,6 +52,7 @@ class _ProbeHelper:
         children: bool = True,
         allow_leaked: Sequence[str] = (),
         allow_threads: Sequence[str] = (),
+        timeline: bool = False,
     ) -> Iterator[ResourceWatcher]:
         """Assert that no file descriptors, threads, or child processes leak.
 
@@ -63,6 +64,7 @@ class _ProbeHelper:
             fds=fds,
             threads=threads,
             children=children,
+            timeline=timeline,
         )
         with watcher:
             yield watcher
@@ -112,6 +114,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         type=float,
         metavar="SECONDS",
         help="Background sampler interval in seconds (default: 0.1s or PROCTRACE_SAMPLE_INTERVAL)",
+    )
+    group.addoption(
+        "--proctrace-timeline",
+        action="store_true",
+        default=False,
+        help="Capture time-series resource timeline for every test",
     )
     group.addoption(
         "--proctrace-baseline",
@@ -170,6 +178,7 @@ class ProctracePlugin:
     def __init__(self, config: pytest.Config) -> None:
         self.config = config
         self.enabled = config.getoption("--proctrace", default=False)
+        self.timeline = config.getoption("--proctrace-timeline", default=False)
         self.output_path = config.getoption("--proctrace-output", default=None)
         self.interval = config.getoption("--proctrace-interval", default=None)
         self.baseline_path = config.getoption("--proctrace-baseline", default=None)
@@ -220,11 +229,16 @@ class ProctracePlugin:
         if marker and "sample_interval" in marker.kwargs:
             interval = marker.kwargs["sample_interval"]
 
+        timeline = self.timeline
+        if marker and "timeline" in marker.kwargs:
+            timeline = bool(marker.kwargs["timeline"])
+
         watcher = ResourceWatcher(
             memory=True,
             fds=True,
             threads=True,
             sample_interval=interval,
+            timeline=timeline,
         )
         self._current_watcher = watcher
 

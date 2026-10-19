@@ -16,6 +16,7 @@ from proctrace._proctrace_core import (
     snapshot_resources,
 )
 from proctrace.core.types import ResourceDelta
+from proctrace.timeline import Timeline
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -72,11 +73,13 @@ class ResourceWatcher:
         threads: bool = True,
         children: bool = True,
         sample_interval: float | None = None,
+        timeline: bool = False,
     ) -> None:
         self.memory = memory
         self.fds = fds
         self.threads = threads
         self.children = children
+        self.timeline = timeline
         resolved_interval = (
             sample_interval
             if sample_interval is not None
@@ -113,7 +116,7 @@ class ResourceWatcher:
 
         self._enter_time_ns = time.monotonic_ns()
 
-        if self.memory:
+        if self.memory or self.timeline:
             self._sampler = BackgroundSampler()
             self._sampler.start(self.sample_interval_ms)
 
@@ -131,15 +134,27 @@ class ResourceWatcher:
         self._running = False
 
         peak_rss = 0
-        try:
-            if self._sampler is not None:
+        peak_at_ms: float | None = None
+        timeline_obj: Timeline | None = None
+        if self._sampler is not None:
+            try:
                 peak_rss = self._sampler.stop()
-        finally:
-            self._sampler = None
+                peak_at_ns = self._sampler.peak_at_ns()
+                if peak_at_ns > 0:
+                    peak_at_ms = peak_at_ns / 1_000_000.0
+                elif peak_rss > 0:
+                    peak_at_ms = 0.0
+
+                if self.timeline:
+                    raw_samples = self._sampler.samples()
+                    timeline_obj = Timeline.from_samples(raw_samples)
+            finally:
+                self._sampler = None
 
         snapshot_after = snapshot_resources() if (self.memory or self.fds) else None
         if snapshot_after is not None and snapshot_after.rss_bytes > peak_rss:
             peak_rss = snapshot_after.rss_bytes
+            peak_at_ms = (exit_time_ns - self._enter_time_ns) / 1_000_000.0
         fds_after = list_open_fds() if self.fds else []
         threads_after_names = (
             [t.name for t in threading.enumerate()] if self.threads else []
@@ -189,6 +204,8 @@ class ResourceWatcher:
             leaked_fds=leaked_fds,
             new_thread_names=new_thread_names,
             sample_interval_ms=self.sample_interval_ms,
+            timeline=timeline_obj,
+            peak_at_ms=peak_at_ms,
         )
 
         if self.on_exit is not None:
@@ -211,6 +228,7 @@ def watch(
     threads: bool = True,
     children: bool = True,
     sample_interval: float | None = None,
+    timeline: bool = False,
 ) -> ResourceWatcher:
     """Create and return a ResourceWatcher context manager."""
     return ResourceWatcher(
@@ -219,6 +237,7 @@ def watch(
         threads=threads,
         children=children,
         sample_interval=sample_interval,
+        timeline=timeline,
     )
 
 

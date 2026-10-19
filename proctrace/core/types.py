@@ -5,6 +5,8 @@ import sys
 from dataclasses import asdict, dataclass
 from typing import Any, Final
 
+from proctrace.timeline import Timeline
+
 _BYTES_PER_MB: Final[int] = 1024 * 1024
 _NS_PER_MS: Final[int] = 1_000_000
 
@@ -24,6 +26,8 @@ class ResourceDelta:
         leaked_fds: List of file descriptors present at exit but not at entry.
         new_thread_names: Names of threads created during the watched block.
         sample_interval_ms: Sampler polling interval in milliseconds.
+        timeline: Optional high-frequency timeline of resource usage.
+        peak_at_ms: Relative timestamp in milliseconds when peak RSS was reached.
     """
 
     rss_delta_bytes: int
@@ -36,6 +40,8 @@ class ResourceDelta:
     leaked_fds: list[str]
     new_thread_names: list[str]
     sample_interval_ms: int = 100
+    timeline: Timeline | None = None
+    peak_at_ms: float | None = None
 
     @property
     def sample_interval_s(self) -> float:
@@ -68,18 +74,30 @@ class ResourceDelta:
         """Elapsed wall-clock time in milliseconds."""
         return self.elapsed_ns / _NS_PER_MS
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert the ResourceDelta to a dictionary."""
-        return asdict(self)
+    def to_dict(self, include_timeline: bool = False) -> dict[str, Any]:
+        """Convert the ResourceDelta to a dictionary.
 
-    def to_json(self, indent: int | None = None) -> str:
+        Args:
+            include_timeline: Whether to include the full timeline array. Defaults to False
+                to avoid exploding serialization payload size.
+        """
+        d = asdict(self)
+        if not include_timeline:
+            d.pop("timeline", None)
+        return d
+
+    def to_json(self, indent: int | None = None, include_timeline: bool = False) -> str:
         """Serialize the ResourceDelta to a JSON string."""
-        return json.dumps(self.to_dict(), indent=indent)
+        return json.dumps(self.to_dict(include_timeline=include_timeline), indent=indent)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ResourceDelta:
         """Construct a ResourceDelta instance from a dictionary."""
-        return cls(**d)
+        data = dict(d)
+        tl_data = data.get("timeline")
+        if isinstance(tl_data, dict):
+            data["timeline"] = Timeline(**tl_data)
+        return cls(**data)
 
     def report(self) -> str:
         """Format a human-readable, ANSI-colored summary report."""
@@ -141,4 +159,4 @@ class ResourceDelta:
         return "\n".join(lines)
 
 
-__all__ = ["ResourceDelta"]
+__all__ = ["ResourceDelta", "Timeline"]

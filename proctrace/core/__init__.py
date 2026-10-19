@@ -8,7 +8,7 @@ from proctrace.core.exceptions import (
     ResourceMonitoringError,
     SignalHandlingError,
 )
-from proctrace.core.types import ResourceDelta
+from proctrace.core.types import ResourceDelta, Timeline
 
 __all__ = [
     "ConfigurationError",
@@ -18,4 +18,5 @@ __all__ = [
     "ResourceDelta",
     "ResourceMonitoringError",
     "SignalHandlingError",
+    "Timeline",
 ]
