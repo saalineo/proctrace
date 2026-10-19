@@ -15,13 +15,22 @@ def test_sampler_records_monotonic_samples():
     samples = sampler.samples()
     assert len(samples) >= 2, f"Expected at least 2 samples, got {len(samples)}"
 
-    t_ns_prev = -1
-    for t_ns, rss, vms, fds in samples:
-        assert t_ns >= t_ns_prev, "Timestamps must be monotonically non-decreasing"
-        assert rss > 0, "RSS must be positive"
-        assert vms > 0, "VMS must be positive"
-        assert fds > 0, "FD count must be positive"
-        t_ns_prev = t_ns
+    assert isinstance(samples, list)
+    for sample in samples:
+        assert isinstance(sample, tuple)
+        assert len(sample) == 4
+        t_ns, rss, vms, fds = sample
+        assert isinstance(t_ns, int) and t_ns >= 0
+        assert isinstance(rss, int) and rss > 0
+        assert isinstance(vms, int) and vms > 0
+        assert isinstance(fds, int) and fds > 0
+
+    # Verify timestamps are monotonically increasing across consecutive samples
+    for i in range(1, len(samples)):
+        assert samples[i][0] > samples[i - 1][0], (
+            f"Expected strictly increasing timestamps, but sample {i} ({samples[i][0]}) "
+            f"<= sample {i-1} ({samples[i-1][0]})"
+        )
 
 
 def test_sampler_decimation_bounds_samples():
@@ -57,3 +66,25 @@ def test_sampler_peak_at_ns():
     assert peak > 0
     assert sampler.peak_at_ns() >= 0
     assert sampler.peak_rss() == peak
+
+
+def test_sampler_default_capacity():
+    from proctrace._proctrace_core import DEFAULT_SAMPLE_CAPACITY
+    assert BackgroundSampler.DEFAULT_CAPACITY == 65_536
+    assert DEFAULT_SAMPLE_CAPACITY == 65_536
+
+
+def test_sampler_samples_callable_multiple_times():
+    sampler = BackgroundSampler()
+    sampler.start(5)
+    time.sleep(0.03)
+    # Can query samples while running without stall
+    samples_running = sampler.samples()
+    assert len(samples_running) >= 1
+
+    sampler.stop()
+    s1 = sampler.samples()
+    s2 = sampler.samples()
+    assert s1 == s2
+    assert len(s1) >= len(samples_running)
+

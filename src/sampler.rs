@@ -150,6 +150,10 @@ impl BackgroundSampler {
         self.shared.peak_rss.load(Ordering::Acquire)
     }
 
+    /// Default sample buffer capacity exposed to Python.
+    #[classattr]
+    pub const DEFAULT_CAPACITY: usize = DEFAULT_SAMPLE_CAPACITY;
+
     /// Return the timestamp (nanoseconds relative to start) at which peak RSS was first reached.
     pub fn peak_at_ns(&self) -> u64 {
         self.shared.peak_at_ns.load(Ordering::Acquire)
@@ -161,10 +165,15 @@ impl BackgroundSampler {
     }
 
     /// Return a copy of all recorded time-series samples as `(t_ns, rss, vms, fds)` tuples.
+    ///
+    /// Copies the sample buffer under lock with a minimal critical section duration,
+    /// transforming into primitive Python tuples entirely outside the lock to eliminate GIL stalls.
     pub fn samples(&self) -> Vec<(u64, u64, u64, u32)> {
-        let guard = self.shared.samples.lock().unwrap_or_else(|e| e.into_inner());
-        guard
-            .iter()
+        let raw = {
+            let guard = self.shared.samples.lock().unwrap_or_else(|e| e.into_inner());
+            guard.clone()
+        };
+        raw.into_iter()
             .map(|s| (s.t_ns, s.rss, s.vms, s.fds))
             .collect()
     }

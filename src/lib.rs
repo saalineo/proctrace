@@ -10,7 +10,7 @@ mod sampler;
 
 use ipc_probe::{IpcStats, SocketStats};
 use resources::ResourceSnapshot;
-use sampler::BackgroundSampler;
+pub use sampler::{BackgroundSampler, Sample, DEFAULT_SAMPLE_CAPACITY};
 
 #[pyfunction]
 fn probe_version() -> &'static str {
@@ -44,5 +44,6 @@ fn _proctrace_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BackgroundSampler>()?;
     m.add_class::<IpcStats>()?;
     m.add_class::<SocketStats>()?;
+    m.add("DEFAULT_SAMPLE_CAPACITY", sampler::DEFAULT_SAMPLE_CAPACITY)?;
     Ok(())
 }
