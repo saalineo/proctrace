@@ -6,6 +6,11 @@ from proctrace.telemetry.decorators import (
     probe,
 )
 from proctrace.telemetry.logger import ProctraceLogger
+from proctrace.telemetry.plot import (
+    plot_timeline,
+    render_html,
+    render_svg,
+)
 from proctrace.telemetry.watcher import (
     DEFAULT_SAMPLE_INTERVAL,
     ResourceWatcher,
@@ -20,6 +25,10 @@ __all__ = [
     "ResourceWatcher",
     "SyncProbeWrapper",
     "get_default_sample_interval",
+    "plot_timeline",
     "probe",
+    "render_html",
+    "render_svg",
     "watch",
 ]
+

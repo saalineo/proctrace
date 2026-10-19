@@ -3,7 +3,13 @@ from __future__ import annotations
 import argparse
 import sys
 
-from proctrace.cli.commands import cmd_dump, cmd_guide, cmd_run, cmd_watch
+from proctrace.cli.commands import (
+    cmd_dump,
+    cmd_guide,
+    cmd_plot,
+    cmd_run,
+    cmd_watch,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +51,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=10.0,
         help="Total watch duration in seconds",
     )
+    watch_p.add_argument(
+        "--timeline",
+        type=str,
+        default=None,
+        metavar="OUT_JSON",
+        help="Save recorded timeline samples to a JSON file",
+    )
+
+    plot_p = subparsers.add_parser(
+        "plot", help="Generate an HTML or SVG plot from recorded timeline JSON"
+    )
+    plot_p.add_argument("timeline_file", help="Path to input timeline JSON file")
+    plot_p.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        required=True,
+        metavar="OUT_FILE",
+        help="Path to output HTML or SVG file",
+    )
+    plot_p.add_argument(
+        "--title",
+        type=str,
+        default="proctrace Resource Timeline",
+        help="Plot title",
+    )
 
     return parser
 
@@ -61,8 +93,10 @@ def main() -> None:
         "dump": cmd_dump,
         "watch": cmd_watch,
         "guide": cmd_guide,
+        "plot": cmd_plot,
     }
     sys.exit(dispatch[args.subcommand](args))
+
 
 
 if __name__ == "__main__":

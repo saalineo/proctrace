@@ -58,6 +58,16 @@ def _read_proc_mem(pid: int) -> tuple[float, float]:
     return int(parts[0]) / 1024.0, int(parts[1]) / 1024.0
 
 
+def _read_proc_fds(pid: int) -> int:
+    if sys.platform == "linux":
+        try:
+            return len(os.listdir(f"/proc/{pid}/fd"))
+        except (OSError, FileNotFoundError):
+            return 0
+    return 0
+
+
+
 def cmd_run(args: argparse.Namespace) -> int:      #Execute a command in a child process and report memory and time deltas
     if not args.command:
         print(
@@ -171,21 +181,86 @@ def cmd_watch(args: argparse.Namespace) -> int:    # Live-monitor the RSS and VM
     print(f"{'Time':>8}  {'RSS MB':>10}  {'VMS MB':>10}", file=sys.stderr)
     print("-" * 32, file=sys.stderr)
 
+    t_start_ns = time.monotonic_ns()
+    t_ms_list: list[float] = []
+    rss_list: list[int] = []
+    vms_list: list[int] = []
+    fds_list: list[int] = []
+
     try:
         while time.monotonic() < deadline:
+            now_ns = time.monotonic_ns()
             rss_mb, vms_mb = _read_proc_mem(pid)
             elapsed = duration - (deadline - time.monotonic())
             line = f"{elapsed:>7.1f}s  {rss_mb:>9.1f}  {vms_mb:>9.1f}"
             print(f"\r{line}", end="", flush=True, file=sys.stderr)
+
+            elapsed_ms = (now_ns - t_start_ns) / _NS_PER_MS
+            t_ms_list.append(elapsed_ms)
+            rss_list.append(int(rss_mb * _BYTES_PER_MB))
+            vms_list.append(int(vms_mb * _BYTES_PER_MB))
+            fds_list.append(_read_proc_fds(pid))
+
             time.sleep(interval)
-    except ProcessLookupError:
+    except (ProcessLookupError, ProcessNotFoundError):
         print(f"\n[proctrace] Process {pid} exited.", file=sys.stderr)
     except KeyboardInterrupt:
         pass
     finally:
         print(file=sys.stderr)
+        from proctrace.timeline import Timeline
+
+        timeline = Timeline(t_ms=t_ms_list, rss=rss_list, vms=vms_list, fds=fds_list)
+        if len(timeline) > 0:
+            peak_mb = (timeline.max_rss_bytes or 0) / _BYTES_PER_MB
+            peak_t = timeline.peak_at_ms or 0.0
+            slope = timeline.rss_slope_bytes_per_s
+            slope_str = (
+                f"{slope / _BYTES_PER_MB:+.2f} MB/s"
+                if slope is not None
+                else "N/A"
+            )
+            print("-" * 32, file=sys.stderr)
+            print("[proctrace watch summary]", file=sys.stderr)
+            print(f"  Peak RSS : {peak_mb:.1f} MB (at {peak_t:.1f} ms)", file=sys.stderr)
+            print(f"  RSS Slope: {slope_str} (R² = {timeline.r2:.2f})", file=sys.stderr)
+
+        timeline_out = getattr(args, "timeline", None)
+        if timeline_out:
+            out_p = Path(timeline_out)
+            out_p.parent.mkdir(parents=True, exist_ok=True)
+            out_p.write_text(timeline.to_json(indent=2), encoding="utf-8")
+            print(f"[proctrace] Wrote timeline to {out_p}", file=sys.stderr)
 
     return 0
+
+
+def cmd_plot(args: argparse.Namespace) -> int:
+    """Generate an HTML or SVG plot from recorded timeline JSON."""
+    input_file = Path(args.timeline_file)
+    if not input_file.is_file():
+        print(f"proctrace plot: file not found: {input_file}", file=sys.stderr)
+        return 1
+
+    from proctrace.telemetry.plot import plot_timeline
+    from proctrace.timeline import Timeline
+
+    try:
+        content = input_file.read_text(encoding="utf-8")
+        timeline = Timeline.from_json(content)
+    except Exception as err:
+        print(f"proctrace plot: failed to parse timeline from {input_file}: {err}", file=sys.stderr)
+        return 1
+
+    out_file = Path(args.output)
+    title = getattr(args, "title", "proctrace Resource Timeline") or "proctrace Resource Timeline"
+    try:
+        plot_timeline(timeline, out_file, title=title)
+        print(f"[proctrace] Plot generated at {out_file}", file=sys.stderr)
+        return 0
+    except Exception as err:
+        print(f"proctrace plot: error generating plot: {err}", file=sys.stderr)
+        return 1
 
 
 def cmd_guide(args: argparse.Namespace) -> int:      # Print the developer documentation guide
@@ -196,9 +271,12 @@ def cmd_guide(args: argparse.Namespace) -> int:      # Print the developer docum
 
 
 __all__ = [
+    "_read_proc_fds",
     "_read_proc_mem",
     "cmd_dump",
     "cmd_guide",
+    "cmd_plot",
     "cmd_run",
     "cmd_watch",
 ]
+

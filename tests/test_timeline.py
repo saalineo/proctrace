@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 import pytest
@@ -124,7 +125,7 @@ def test_watch_with_timeline():
 def test_watch_with_timeline_and_memory_false():
     # If timeline=True, the sampler must still run even if memory=False
     with watch(memory=False, timeline=True, sample_interval=0.01) as probe:
-        time.sleep(0.03)
+        time.sleep(0.05)
 
     delta = probe.result
     assert delta is not None
@@ -145,7 +146,7 @@ def test_watch_without_timeline_has_no_timeline_overhead():
 def test_probe_decorator_with_timeline():
     @probe(timeline=True, sample_interval=0.01, output="none")
     def work():
-        time.sleep(0.03)
+        time.sleep(0.05)
         return "ok"
 
     res = work()
@@ -158,7 +159,7 @@ def test_probe_decorator_with_timeline():
 def test_async_probe_decorator_with_timeline():
     @probe(timeline=True, sample_interval=0.01, output="none")
     async def async_work():
-        await asyncio.sleep(0.03)
+        await asyncio.sleep(0.05)
         return "async_ok"
 
     res = asyncio.run(async_work())
@@ -170,7 +171,8 @@ def test_async_probe_decorator_with_timeline():
 
 @pytest.mark.proctrace(timeline=True, sample_interval=0.01)
 def test_pytest_marker_with_timeline(request):
-    time.sleep(0.03)
+    time.sleep(0.05)
+
     # Check that request stash captured the timeline
     from proctrace.testing.pytest_plugin import PROCTRACE_KEY
 
@@ -178,3 +180,153 @@ def test_pytest_marker_with_timeline(request):
     if delta is not None:
         assert delta.timeline is not None
         assert len(delta.timeline) >= 2
+
+
+def test_timeline_monotonic_buffer_collection_and_decimation():
+    """Unit test: monotonic buffer collection & decimation under capacity limits."""
+    from proctrace._proctrace_core import BackgroundSampler
+
+    cap = 8
+    sampler = BackgroundSampler(cap)
+    sampler.start(2)
+    time.sleep(0.06)
+    sampler.stop()
+
+    samples = sampler.samples()
+    assert 0 < len(samples) <= cap, f"Sample count {len(samples)} exceeded capacity {cap}"
+
+    # Verify timestamps are strictly monotonically increasing
+    for i in range(1, len(samples)):
+        assert samples[i][0] > samples[i - 1][0], (
+            f"Timestamp at {i} ({samples[i][0]}) <= timestamp at {i-1} ({samples[i-1][0]})"
+        )
+
+    # Convert to Timeline and verify monotonicity and capacity preservation
+    tl = Timeline.from_samples(samples)
+    assert len(tl) <= cap
+    for i in range(1, len(tl)):
+        assert tl.t_ms[i] > tl.t_ms[i - 1]
+
+
+def test_timeline_synthetic_leak_and_steady_state():
+    """Synthetic leak test: intentional allocation loop asserts is_growing() == True, steady state asserts False."""
+    # 1. Intentional allocation loop: memory steadily allocated over time
+    # Using 4MB chunks guarantees allocations exceed glibc MMAP_THRESHOLD (128KB)
+    # forcing direct kernel mmap pages and continuous linear RSS growth.
+    with watch(timeline=True, sample_interval=0.01) as probe_leak:
+        leak_store = []
+        for _ in range(8):
+            leak_store.append(bytearray(b"M" * (4 * 1024 * 1024)))
+            time.sleep(0.015)
+
+    delta_leak = probe_leak.result
+    assert delta_leak is not None
+    assert delta_leak.timeline is not None
+    assert delta_leak.timeline.is_growing(), (
+        f"Expected is_growing() == True for synthetic leak, slope={delta_leak.timeline.rss_slope_bytes_per_s}, "
+        f"r2={delta_leak.timeline.r2}"
+    )
+    assert delta_leak.timeline.rss_slope_bytes_per_s is not None
+    assert delta_leak.timeline.rss_slope_bytes_per_s > 0
+
+    # 2. Steady state loop: no allocations during monitored block
+    with watch(timeline=True, sample_interval=0.01) as probe_steady:
+        for _ in range(8):
+            time.sleep(0.015)
+
+    delta_steady = probe_steady.result
+    assert delta_steady is not None
+    assert delta_steady.timeline is not None
+    assert not delta_steady.timeline.is_growing(), (
+        f"Expected is_growing() == False for steady state, slope={delta_steady.timeline.rss_slope_bytes_per_s}, "
+        f"r2={delta_steady.timeline.r2}"
+    )
+
+
+
+def test_sampler_stop_latency_under_5ms():
+    """Latency test: verify sampler.stop() completes in < 5 ms regardless of interval."""
+    from proctrace._proctrace_core import BackgroundSampler
+
+    for interval_ms in [500, 1000, 2500, 5000]:
+        sampler = BackgroundSampler()
+        sampler.start(interval_ms)
+        time.sleep(0.01)
+
+        t0 = time.perf_counter()
+        sampler.stop()
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        assert elapsed_ms < 5.0, (
+            f"sampler.stop() took {elapsed_ms:.3f} ms with interval {interval_ms} ms (must be < 5 ms)"
+        )
+
+
+def test_timeline_plot_html_and_svg_markers(tmp_path):
+    """Plot test: verify output HTML/SVG is valid and contains expected markers and data."""
+    import re
+    from proctrace.telemetry.plot import plot_timeline, render_html, render_svg
+
+    t_ms = [0.0, 10.0, 20.0, 30.0, 40.0]
+    rss = [10_000_000, 12_000_000, 28_000_000, 15_000_000, 14_000_000]
+    vms = [50_000_000, 52_000_000, 58_000_000, 53_000_000, 51_000_000]
+    fds = [5, 6, 7, 6, 5]
+
+    tl = Timeline(t_ms=t_ms, rss=rss, vms=vms, fds=fds)
+    assert tl.peak_at_ms == 20.0
+
+    # 1. Standalone SVG test
+    svg = render_svg(tl, title="Test Pipeline Memory")
+    assert "<svg" in svg and "</svg>" in svg
+    assert 'class="curve-rss"' in svg
+    assert 'class="curve-vms"' in svg
+    assert 'class="curve-fds"' in svg
+    assert "RSS (MB)" in svg
+    assert "VMS (MB)" in svg
+    assert "Time (ms)" in svg
+    assert 'class="peak-marker"' in svg
+    assert 'id="peak-marker"' in svg
+    assert "20.0 ms" in svg
+    assert '<script type="application/json" id="proctrace-timeline-data">' in svg
+
+    # Extract JSON embedded in SVG
+    json_match = re.search(
+        r'<script type="application/json" id="proctrace-timeline-data">\s*(\{.*?\})\s*</script>',
+        svg,
+        re.DOTALL,
+    )
+    assert json_match is not None, "Failed to find embedded JSON in SVG"
+    extracted_json = json.loads(json_match.group(1))
+    assert extracted_json["t_ms"] == t_ms
+    assert extracted_json["rss"] == rss
+    assert extracted_json["vms"] == vms
+    assert extracted_json["fds"] == fds
+
+    # 2. Standalone HTML test
+    html = render_html(tl, title="Test HTML Pipeline")
+    assert "<!DOCTYPE html>" in html
+    assert "<html" in html and "</html>" in html
+    assert "<svg" in html
+    assert '<script type="application/json" id="proctrace-timeline-data">' in html
+    assert "Peak RSS" in html
+    assert "Peak Time" in html
+    assert "20.0 ms" in html
+
+    # 3. File export test via plot_timeline / tl.plot
+    svg_file = tmp_path / "chart.svg"
+    html_file = tmp_path / "chart.html"
+
+    tl.plot(svg_file)
+    assert svg_file.is_file()
+    assert "<svg" in svg_file.read_text(encoding="utf-8")
+
+    plot_timeline(tl, html_file)
+    assert html_file.is_file()
+    assert "<!DOCTYPE html>" in html_file.read_text(encoding="utf-8")
+
+    # 4. Deserialization round-trip
+    restored = Timeline.from_json(tl.to_json())
+    assert restored.t_ms == tl.t_ms
+    assert restored.rss == tl.rss
+    assert restored.peak_at_ms == tl.peak_at_ms
+

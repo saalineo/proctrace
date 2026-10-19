@@ -29,7 +29,14 @@ from proctrace.diagnostics import (
     uninstall_signal_handler,
 )
 from proctrace.ipc import ipc_report, trace_ipc, trace_pipe, trace_socket
-from proctrace.telemetry import ResourceWatcher, probe, watch
+from proctrace.telemetry import (
+    ResourceWatcher,
+    plot_timeline,
+    probe,
+    render_html,
+    render_svg,
+    watch,
+)
 from proctrace.testing import Limits, load_baseline, save_baseline
 
 __version__: Final[str] = _probe_version()
@@ -71,7 +78,10 @@ __all__ = [
     "install_signal_handler",
     "ipc_report",
     "load_baseline",
+    "plot_timeline",
     "probe",
+    "render_html",
+    "render_svg",
     "save_baseline",
     "trace_ipc",
     "trace_pipe",

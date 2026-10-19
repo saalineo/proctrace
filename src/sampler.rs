@@ -81,28 +81,28 @@ impl BackgroundSampler {
             guard.clear();
         }
 
+        let start_instant = Instant::now();
+
+        // Capture initial baseline sample synchronously at t = 0
+        if let Ok(snap) = snapshot() {
+            let rss = snap.rss_bytes;
+            self.shared.peak_rss.store(rss, Ordering::Relaxed);
+            self.shared.peak_at_ns.store(0, Ordering::Relaxed);
+            let mut guard = self.shared.samples.lock().unwrap_or_else(|e| e.into_inner());
+            guard.push(Sample {
+                t_ns: 0,
+                rss,
+                vms: snap.vms_bytes,
+                fds: snap.open_fds,
+            });
+        }
+
         let shared = Arc::clone(&self.shared);
         let interval = Duration::from_millis(interval_ms.max(1));
 
         self.handle = Some(thread::spawn(move || {
-            let start_instant = Instant::now();
             let mut stride: usize = 1;
             let mut ticks_since_sample: usize = 0;
-
-            // Capture initial baseline sample at t = 0
-            if let Ok(snap) = snapshot() {
-                let elapsed_ns = start_instant.elapsed().as_nanos() as u64;
-                let rss = snap.rss_bytes;
-                shared.peak_rss.store(rss, Ordering::Relaxed);
-                shared.peak_at_ns.store(elapsed_ns, Ordering::Relaxed);
-                let mut guard = shared.samples.lock().unwrap_or_else(|e| e.into_inner());
-                guard.push(Sample {
-                    t_ns: elapsed_ns,
-                    rss,
-                    vms: snap.vms_bytes,
-                    fds: snap.open_fds,
-                });
-            }
 
             while !shared.stop.load(Ordering::Relaxed) {
                 thread::park_timeout(interval);
@@ -124,16 +124,45 @@ impl BackgroundSampler {
                     if ticks_since_sample >= stride {
                         ticks_since_sample = 0;
                         let mut guard = shared.samples.lock().unwrap_or_else(|e| e.into_inner());
-                        guard.push(Sample {
-                            t_ns: elapsed_ns,
-                            rss,
-                            vms: snap.vms_bytes,
-                            fds: snap.open_fds,
-                        });
-                        if guard.len() >= shared.cap {
-                            decimate_in_place(&mut guard);
-                            stride = stride.saturating_mul(2);
+                        let should_push = guard.last().map_or(true, |last| elapsed_ns > last.t_ns);
+                        if should_push {
+                            guard.push(Sample {
+                                t_ns: elapsed_ns,
+                                rss,
+                                vms: snap.vms_bytes,
+                                fds: snap.open_fds,
+                            });
+                            if guard.len() >= shared.cap {
+                                decimate_in_place(&mut guard);
+                                stride = stride.saturating_mul(2);
+                            }
                         }
+                    }
+                }
+            }
+
+            // Capture final sample upon stop if elapsed time has advanced
+            if let Ok(snap) = snapshot() {
+                let elapsed_ns = start_instant.elapsed().as_nanos() as u64;
+                let rss = snap.rss_bytes;
+
+                let current_peak = shared.peak_rss.load(Ordering::Relaxed);
+                if rss > current_peak {
+                    shared.peak_rss.store(rss, Ordering::Relaxed);
+                    shared.peak_at_ns.store(elapsed_ns, Ordering::Relaxed);
+                }
+
+                let mut guard = shared.samples.lock().unwrap_or_else(|e| e.into_inner());
+                let should_push = guard.last().map_or(true, |last| elapsed_ns > last.t_ns);
+                if should_push {
+                    guard.push(Sample {
+                        t_ns: elapsed_ns,
+                        rss,
+                        vms: snap.vms_bytes,
+                        fds: snap.open_fds,
+                    });
+                    if guard.len() >= shared.cap {
+                        decimate_in_place(&mut guard);
                     }
                 }
             }

@@ -4,6 +4,7 @@ from proctrace.cli.commands import (
     _read_proc_mem,
     cmd_dump,
     cmd_guide,
+    cmd_plot,
     cmd_run,
     cmd_watch,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "build_parser",
     "cmd_dump",
     "cmd_guide",
+    "cmd_plot",
     "cmd_run",
     "cmd_watch",
     "main",

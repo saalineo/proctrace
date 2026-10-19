@@ -102,7 +102,7 @@ class ResourceWatcher:
 
     def __enter__(self) -> Self:
         """Start resource tracking and spawn the background sampler if enabled."""
-        if self.memory or self.fds:
+        if self.memory or self.fds or self.timeline:
             self._snapshot_before = snapshot_resources()
 
         if self.fds:
@@ -133,6 +133,12 @@ class ResourceWatcher:
         exit_time_ns = time.monotonic_ns()
         self._running = False
 
+        snapshot_after = (
+            snapshot_resources()
+            if (self.memory or self.fds or self.timeline)
+            else None
+        )
+
         peak_rss = 0
         peak_at_ms: float | None = None
         timeline_obj: Timeline | None = None
@@ -147,12 +153,22 @@ class ResourceWatcher:
 
                 if self.timeline:
                     raw_samples = self._sampler.samples()
+                    if snapshot_after is not None and len(raw_samples) < 2:
+                        exit_elapsed_ns = exit_time_ns - self._enter_time_ns
+                        last_t_ns = raw_samples[-1][0] if raw_samples else 0
+                        if exit_elapsed_ns > last_t_ns:
+                            raw_samples.append((
+                                exit_elapsed_ns,
+                                snapshot_after.rss_bytes,
+                                snapshot_after.vms_bytes,
+                                snapshot_after.open_fds,
+                            ))
                     timeline_obj = Timeline.from_samples(raw_samples)
             finally:
                 self._sampler = None
 
-        snapshot_after = snapshot_resources() if (self.memory or self.fds) else None
         if snapshot_after is not None and snapshot_after.rss_bytes > peak_rss:
+
             peak_rss = snapshot_after.rss_bytes
             peak_at_ms = (exit_time_ns - self._enter_time_ns) / 1_000_000.0
         fds_after = list_open_fds() if self.fds else []

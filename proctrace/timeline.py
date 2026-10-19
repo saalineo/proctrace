@@ -152,5 +152,60 @@ class Timeline:
         """Serialize Timeline to JSON string."""
         return json.dumps(self.to_dict(), indent=indent)
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Timeline:
+        """Construct a Timeline from a dictionary representation."""
+        return cls(
+            t_ms=[float(x) for x in d.get("t_ms", [])],
+            rss=[int(x) for x in d.get("rss", [])],
+            vms=[int(x) for x in d.get("vms", [])],
+            fds=[int(x) for x in d.get("fds", [])],
+        )
+
+    @classmethod
+    def from_json(cls, s: str) -> Timeline:
+        """Deserialize a Timeline from a JSON string."""
+        data = json.loads(s)
+        if isinstance(data, dict):
+            if "timeline" in data and isinstance(data["timeline"], dict):
+                data = data["timeline"]
+            return cls.from_dict(data)
+        raise ValueError(f"Expected JSON object, got {type(data).__name__}")
+
+    def to_svg(
+        self,
+        title: str = "proctrace Resource Timeline",
+        width: int = 900,
+        height: int = 450,
+    ) -> str:
+        """Render this Timeline to a standalone SVG string."""
+        from proctrace.telemetry.plot import render_svg
+
+        return render_svg(self, title=title, width=width, height=height)
+
+    def to_html(
+        self,
+        title: str = "proctrace Resource Timeline",
+        width: int = 900,
+        height: int = 450,
+    ) -> str:
+        """Render this Timeline to a standalone HTML string."""
+        from proctrace.telemetry.plot import render_html
+
+        return render_html(self, title=title, width=width, height=height)
+
+    def plot(
+        self,
+        output_path: str | Any,
+        title: str = "proctrace Resource Timeline",
+        width: int = 900,
+        height: int = 450,
+    ) -> None:
+        """Export this Timeline as an HTML or SVG plot file."""
+        from proctrace.telemetry.plot import plot_timeline
+
+        plot_timeline(self, output_path, title=title, width=width, height=height)
+
 
 __all__ = ["Timeline"]
+
