@@ -124,7 +124,7 @@ impl BackgroundSampler {
                     if ticks_since_sample >= stride {
                         ticks_since_sample = 0;
                         let mut guard = shared.samples.lock().unwrap_or_else(|e| e.into_inner());
-                        let should_push = guard.last().map_or(true, |last| elapsed_ns > last.t_ns);
+                        let should_push = guard.last().is_none_or(|last| elapsed_ns > last.t_ns);
                         if should_push {
                             guard.push(Sample {
                                 t_ns: elapsed_ns,
@@ -153,7 +153,7 @@ impl BackgroundSampler {
                 }
 
                 let mut guard = shared.samples.lock().unwrap_or_else(|e| e.into_inner());
-                let should_push = guard.last().map_or(true, |last| elapsed_ns > last.t_ns);
+                let should_push = guard.last().is_none_or(|last| elapsed_ns > last.t_ns);
                 if should_push {
                     guard.push(Sample {
                         t_ns: elapsed_ns,
