@@ -7,7 +7,7 @@ import time
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from proctrace._proctrace_core import (
     BackgroundSampler,
@@ -21,6 +21,7 @@ from proctrace.timeline import Timeline
 if TYPE_CHECKING:
     from types import TracebackType
     from typing import Self
+    from proctrace.alloc import AllocationReport, AllocationTracker, ObjectGrowth
 
 DEFAULT_SAMPLE_INTERVAL: Final[float] = 0.1  # seconds
 _DEFAULT_SUBPROCESS_TIMEOUT: Final[float] = 2.0  # seconds
@@ -74,6 +75,11 @@ class ResourceWatcher:
         children: bool = True,
         sample_interval: float | None = None,
         timeline: bool = False,
+        attribution: Literal["tracemalloc", "objects", "all"] | str | bool | None = None,
+        top: int = 10,
+        attribution_top: int | None = None,
+        frames: int = 1,
+        attribution_frames: int | None = None,
     ) -> None:
         self.memory = memory
         self.fds = fds
@@ -88,6 +94,26 @@ class ResourceWatcher:
         self.sample_interval = resolved_interval
         self.sample_interval_ms = max(1, int(resolved_interval * 1000))
 
+        if attribution is True:
+            self.attribution: str | None = "tracemalloc"
+        elif attribution is False or attribution is None:
+            self.attribution = None
+        elif isinstance(attribution, str):
+            attr_norm = attribution.strip().lower()
+            if attr_norm not in ("tracemalloc", "objects", "all"):
+                raise ValueError(
+                    f"Invalid attribution mode: {attribution!r}. "
+                    "Expected None, 'tracemalloc', 'objects', or 'all'."
+                )
+            self.attribution = attr_norm
+        else:
+            raise TypeError(
+                f"attribution must be str, bool, or None, got {type(attribution).__name__}"
+            )
+
+        self.top = max(1, attribution_top if attribution_top is not None else top)
+        self.frames = max(1, attribution_frames if attribution_frames is not None else frames)
+
         # State captured at block entry
         self._snapshot_before: ResourceSnapshot | None = None
         self._fds_before: list[str] = []
@@ -95,6 +121,8 @@ class ResourceWatcher:
         self._children_before: int = 0
         self._enter_time_ns: int = 0
         self._sampler: BackgroundSampler | None = None
+        self._alloc_tracker: AllocationTracker | None = None
+        self._objects_before: Counter[str] | None = None
 
         self.result: ResourceDelta | None = None
         self.on_exit: Callable[[ResourceDelta], None] | None = None
@@ -119,6 +147,17 @@ class ResourceWatcher:
         if self.memory or self.timeline:
             self._sampler = BackgroundSampler()
             self._sampler.start(self.sample_interval_ms)
+
+        # Start allocation and object tracking AFTER baseline snapshot
+        # so tracker startup itself does not count as resource growth
+        if self.attribution in ("objects", "all"):
+            from proctrace.alloc import get_object_census
+            self._objects_before = get_object_census()
+
+        if self.attribution in ("tracemalloc", "all"):
+            from proctrace.alloc import AllocationTracker
+            self._alloc_tracker = AllocationTracker(top=self.top, frames=self.frames)
+            self._alloc_tracker.start()
 
         self._running = True
         return self
@@ -209,6 +248,23 @@ class ResourceWatcher:
         child_delta = children_after - self._children_before
         elapsed_ns = exit_time_ns - self._enter_time_ns
 
+        # Stop attribution tracker and object census AFTER snapshot_after
+        # so releasing snapshot memory does not skew process RSS measurements
+        allocations_report = None
+        if self._alloc_tracker is not None:
+            try:
+                allocations_report = self._alloc_tracker.stop(rss_delta_bytes=rss_delta)
+            finally:
+                self._alloc_tracker = None
+
+        object_growth = None
+        if self._objects_before is not None:
+            from proctrace.alloc import ObjectGrowth, get_object_census
+            objects_after = get_object_census()
+            growth_counter = objects_after - self._objects_before
+            self._objects_before = None
+            object_growth = ObjectGrowth(growth_counter)
+
         self.result = ResourceDelta(
             rss_delta_bytes=rss_delta,
             vms_delta_bytes=vms_delta,
@@ -222,6 +278,8 @@ class ResourceWatcher:
             sample_interval_ms=self.sample_interval_ms,
             timeline=timeline_obj,
             peak_at_ms=peak_at_ms,
+            allocations=allocations_report,
+            object_growth=object_growth,
         )
 
         if self.on_exit is not None:
@@ -245,6 +303,11 @@ def watch(
     children: bool = True,
     sample_interval: float | None = None,
     timeline: bool = False,
+    attribution: Literal["tracemalloc", "objects", "all"] | str | bool | None = None,
+    top: int = 10,
+    attribution_top: int | None = None,
+    frames: int = 1,
+    attribution_frames: int | None = None,
 ) -> ResourceWatcher:
     """Create and return a ResourceWatcher context manager."""
     return ResourceWatcher(
@@ -254,6 +317,11 @@ def watch(
         children=children,
         sample_interval=sample_interval,
         timeline=timeline,
+        attribution=attribution,
+        top=top,
+        attribution_top=attribution_top,
+        frames=frames,
+        attribution_frames=attribution_frames,
     )
 
 

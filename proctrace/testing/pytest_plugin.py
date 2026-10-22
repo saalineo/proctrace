@@ -122,6 +122,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Capture time-series resource timeline for every test",
     )
     group.addoption(
+        "--proctrace-attribution",
+        default=None,
+        choices=["tracemalloc", "objects", "all"],
+        help="Enable memory allocation attribution (tracemalloc, objects, or all)",
+    )
+    group.addoption(
         "--proctrace-baseline",
         default=None,
         metavar="PATH",
@@ -179,6 +185,7 @@ class ProctracePlugin:
         self.config = config
         self.enabled = config.getoption("--proctrace", default=False)
         self.timeline = config.getoption("--proctrace-timeline", default=False)
+        self.attribution = config.getoption("--proctrace-attribution", default=None)
         self.output_path = config.getoption("--proctrace-output", default=None)
         self.interval = config.getoption("--proctrace-interval", default=None)
         self.baseline_path = config.getoption("--proctrace-baseline", default=None)
@@ -233,12 +240,34 @@ class ProctracePlugin:
         if marker and "timeline" in marker.kwargs:
             timeline = bool(marker.kwargs["timeline"])
 
+        attribution = self.attribution
+        top = self.top_n
+        frames = 1
+        if marker:
+            if "attribution" in marker.kwargs:
+                attr_val = marker.kwargs["attribution"]
+                if attr_val is True:
+                    attribution = "tracemalloc"
+                elif attr_val:
+                    attribution = str(attr_val)
+            if "top" in marker.kwargs:
+                top = int(marker.kwargs["top"])
+            if "attribution_top" in marker.kwargs:
+                top = int(marker.kwargs["attribution_top"])
+            if "frames" in marker.kwargs:
+                frames = int(marker.kwargs["frames"])
+            if "attribution_frames" in marker.kwargs:
+                frames = int(marker.kwargs["attribution_frames"])
+
         watcher = ResourceWatcher(
             memory=True,
             fds=True,
             threads=True,
             sample_interval=interval,
             timeline=timeline,
+            attribution=attribution,
+            top=top,
+            frames=frames,
         )
         self._current_watcher = watcher
 
@@ -274,6 +303,8 @@ class ProctracePlugin:
                     )
 
             if violations:
+                if watcher.result.allocations is not None:
+                    violations.append("\nTop allocations:\n" + watcher.result.allocations.report())
                 item.stash[PROCTRACE_VIOLATIONS_KEY] = violations
 
             record = {

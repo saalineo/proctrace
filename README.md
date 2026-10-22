@@ -39,6 +39,31 @@ Built with a compiled Rust engine via PyO3, `proctrace` queries kernel procfs, t
 ###  True OS-Level Memory & Peak Telemetry
 - **Physical RSS & Virtual VMS**: Directly reads OS resident memory (`/proc/self/statm` on Linux, `mach_task_self()` on macOS), capturing allocations across Python and native extensions alike.
 - **Monotonic High-Water Mark (Peak RSS)**: An asynchronous, ultra-low-overhead background sampler captures memory spikes that allocate and deallocate within the lifetime of a function.
+- **Allocation Attribution (`tracemalloc` & Object Census)**: Pinpoints exact file and line numbers where Python allocations occurred, decomposes growth into Python-managed vs native/untracked C extension allocations, and maps object type growth.
+
+###  Allocation Attribution (Where Did the Memory Go?)
+
+When process RSS grows, `proctrace` can report exact Python source lines, object counts, and whether memory growth occurred in Python-managed objects or native C extensions/allocator fragmentation:
+
+```python
+import proctrace
+
+with proctrace.watch(attribution="tracemalloc", top=10) as p:
+    work()
+
+print(p.result.allocations.report())
+# +84.2 MB  app/loader.py:57   (12,331 blocks)
+# +20.1 MB  app/cache.py:19    (   410 blocks)
+# python-tracked: 112 MB   native/untracked: 8 MB   (rss delta 120 MB)
+
+# In "objects" or "all" mode, inspect GC object census deltas:
+print(p.result.object_growth)
+# {"dict": +10234, "MyRecord": +200, ...}
+```
+
+> [!NOTE]
+> **Overhead & Performance Trade-offs**: Attribution tracking is strictly opt-in (`attribution=None` by default with zero runtime overhead). When enabled, 1-frame tracing (`frames=1`) introduces roughly 2x–4x allocation overhead in CPython. Deeper stacks (`frames=10`) capture multi-level call chains with ~4x–8x allocation overhead. Object census (`attribution="objects"`) performs full GC sweeps before and after the block.
+
 
 ###  Deterministic Handle & File Descriptor Leak Detection
 - **Exact Path Resolution**: Takes instant diffs of `/proc/self/fd` to detect newly leaked handles and resolves them to their exact filesystem paths or socket endpoints.
@@ -59,7 +84,7 @@ Built with a compiled Rust engine via PyO3, `proctrace` queries kernel procfs, t
 - **On-Demand Stack Dumps**: Installs non-intrusive signal handlers (`SIGUSR1`, `SIGUSR2`, `SIGALRM`) to atomically dump stack traces for every thread and active `asyncio` task to stderr without pausing or restarting the target process.
 
 ###  Production-Grade Pytest Suite & CI Baselines
-- **`@pytest.mark.proctrace(...)`**: Enforces strict resource budgets per test (e.g., max peak memory, zero leaked FDs).
+- **`@pytest.mark.proctrace(...)`**: Enforces strict resource budgets per test (e.g., max peak memory, zero leaked FDs) and displays top allocations on violation via `attribution=True`.
 - **`proctrace_probe` Fixture**: Enables scoped assertions (`assert_no_leaks`) within specific test segments.
 - **CI Regression Baselines**: Records baseline metrics and fails builds on memory or latency regressions (`--proctrace-fail-on-regression 10%`).
 - **Top-N Memory Ranking**: Displays the highest peak RSS tests in a formatted terminal summary table.
@@ -69,7 +94,7 @@ Built with a compiled Rust engine via PyO3, `proctrace` queries kernel procfs, t
 - Streams `ResourceDelta` telemetry formatted as JSON Lines (`jsonl`), JSON, or human-readable text directly to files, stdout, TCP sockets, or UNIX domain sockets.
 
 ###  Standalone CLI Tooling
-- `proctrace run`: Profile external commands with memory, FD, and execution time telemetry.
+- `proctrace run`: Profile external commands with memory, FD, execution time telemetry, and allocation attribution via `--attribution`.
 - `proctrace watch`: Real-time live PID polling with interactive terminal visualization.
 - `proctrace dump`: Send diagnostic dump signals to remote processes.
 

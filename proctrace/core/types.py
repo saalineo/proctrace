@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import asdict, dataclass
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from proctrace.timeline import Timeline
+
+if TYPE_CHECKING:
+    from proctrace.alloc import AllocationReport, ObjectGrowth
 
 _BYTES_PER_MB: Final[int] = 1024 * 1024
 _NS_PER_MS: Final[int] = 1_000_000
@@ -42,6 +45,8 @@ class ResourceDelta:
     sample_interval_ms: int = 100
     timeline: Timeline | None = None
     peak_at_ms: float | None = None
+    allocations: AllocationReport | None = None
+    object_growth: dict[str, int] | None = None
 
     @property
     def sample_interval_s(self) -> float:
@@ -97,6 +102,14 @@ class ResourceDelta:
         tl_data = data.get("timeline")
         if isinstance(tl_data, dict):
             data["timeline"] = Timeline(**tl_data)
+        alloc_data = data.get("allocations")
+        if isinstance(alloc_data, dict):
+            from proctrace.alloc import AllocationReport
+            data["allocations"] = AllocationReport.from_dict(alloc_data)
+        growth_data = data.get("object_growth")
+        if isinstance(growth_data, dict):
+            from proctrace.alloc import ObjectGrowth
+            data["object_growth"] = ObjectGrowth(growth_data)
         return cls(**data)
 
     def report(self) -> str:

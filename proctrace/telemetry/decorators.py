@@ -60,6 +60,12 @@ class _BaseProbeWrapper:
         output: Literal["stderr", "none"],
         store: bool,
         timeline: bool = False,
+        attribution: str | bool | None = None,
+        top: int = 10,
+        attribution_top: int | None = None,
+        frames: int = 1,
+        attribution_frames: int | None = None,
+        warmup: int = 0,
     ) -> None:
         self._fn = fn
         self._memory = memory
@@ -70,6 +76,10 @@ class _BaseProbeWrapper:
         self._output = output
         self._store = store
         self._timeline = timeline
+        self._attribution = attribution
+        self._top = attribution_top if attribution_top is not None else top
+        self._frames = attribution_frames if attribution_frames is not None else frames
+        self._warmup = max(0, warmup)
         self._storage = _ProbeResultStorage()
         functools.update_wrapper(self, fn)
 
@@ -90,6 +100,9 @@ class _BaseProbeWrapper:
             children=self._children,
             sample_interval=self._sample_interval,
             timeline=self._timeline,
+            attribution=self._attribution,
+            top=self._top,
+            frames=self._frames,
         )
 
     def _publish_result(self, delta: ResourceDelta | None) -> None:
@@ -110,6 +123,10 @@ class SyncProbeWrapper(_BaseProbeWrapper):
     """Wrapper for synchronous functions decorated with @probe."""
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if self._warmup > 0:
+            for _ in range(self._warmup):
+                self._fn(*args, **kwargs)
+
         watcher = self._create_watcher()
         with watcher:
             result = self._fn(*args, **kwargs)
@@ -132,6 +149,12 @@ class AsyncProbeWrapper(_BaseProbeWrapper):
         output: Literal["stderr", "none"],
         store: bool,
         timeline: bool = False,
+        attribution: str | bool | None = None,
+        top: int = 10,
+        attribution_top: int | None = None,
+        frames: int = 1,
+        attribution_frames: int | None = None,
+        warmup: int = 0,
     ) -> None:
         super().__init__(
             fn,
@@ -143,6 +166,12 @@ class AsyncProbeWrapper(_BaseProbeWrapper):
             output,
             store,
             timeline=timeline,
+            attribution=attribution,
+            top=top,
+            attribution_top=attribution_top,
+            frames=frames,
+            attribution_frames=attribution_frames,
+            warmup=warmup,
         )
         if hasattr(inspect, "markcoroutinefunction"):
             inspect.markcoroutinefunction(self)
@@ -150,6 +179,10 @@ class AsyncProbeWrapper(_BaseProbeWrapper):
             self._is_coroutine = getattr(asyncio.coroutines, "_is_coroutine", True)
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if self._warmup > 0:
+            for _ in range(self._warmup):
+                await self._fn(*args, **kwargs)
+
         watcher = self._create_watcher()
         with watcher:
             result = await self._fn(*args, **kwargs)
@@ -168,6 +201,12 @@ def probe(
     output: Literal["stderr", "none"] = "stderr",
     store: bool = True,
     timeline: bool = False,
+    attribution: str | bool | None = None,
+    top: int = 10,
+    attribution_top: int | None = None,
+    frames: int = 1,
+    attribution_frames: int | None = None,
+    warmup: int = 0,
 ) -> Callable[[F], F]:
     """Decorator to monitor resource usage during function execution.
 
@@ -197,6 +236,12 @@ def probe(
                 output=output,
                 store=store,
                 timeline=timeline,
+                attribution=attribution,
+                top=top,
+                attribution_top=attribution_top,
+                frames=frames,
+                attribution_frames=attribution_frames,
+                warmup=warmup,
             )  # type: ignore
         else:
             return SyncProbeWrapper(
@@ -209,6 +254,12 @@ def probe(
                 output=output,
                 store=store,
                 timeline=timeline,
+                attribution=attribution,
+                top=top,
+                attribution_top=attribution_top,
+                frames=frames,
+                attribution_frames=attribution_frames,
+                warmup=warmup,
             )  # type: ignore
 
     return decorator

@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Final
@@ -78,62 +80,144 @@ def cmd_run(args: argparse.Namespace) -> int:      #Execute a command in a child
 
     from proctrace._proctrace_core import snapshot_resources
 
+    attribution_enabled = getattr(args, "attribution", False)
+    temp_dir: str | None = None
+    attr_file: Path | None = None
+    child_env: dict[str, str] | None = None
+
+    if attribution_enabled:
+        temp_dir = tempfile.mkdtemp(prefix="proctrace_attr_")
+        attr_file = Path(temp_dir) / "attribution.json"
+        sitecustomize_path = Path(temp_dir) / "sitecustomize.py"
+        sitecustomize_code = (
+            "import atexit\n"
+            "import json\n"
+            "import os\n"
+            "import tracemalloc\n\n"
+            "def _proctrace_dump_attribution():\n"
+            "    if not tracemalloc.is_tracing():\n"
+            "        return\n"
+            "    snapshot = tracemalloc.take_snapshot()\n"
+            "    top_n = int(os.environ.get('PROCTRACE_ATTRIBUTION_TOP', '10'))\n"
+            "    out_path = os.environ.get('PROCTRACE_ATTRIBUTION_FILE')\n"
+            "    if not out_path:\n"
+            "        return\n"
+            "    try:\n"
+            "        filters = [\n"
+            "            tracemalloc.Filter(False, '<frozen *'),\n"
+            "            tracemalloc.Filter(False, __file__),\n"
+            "        ]\n"
+            "        tracemalloc_file = getattr(tracemalloc, '__file__', None)\n"
+            "        if tracemalloc_file:\n"
+            "            filters.append(tracemalloc.Filter(False, tracemalloc_file))\n"
+            "        filtered = snapshot.filter_traces(filters)\n"
+            "        stats = filtered.statistics('lineno')\n"
+            "        entries = []\n"
+            "        py_tracked = sum(s.size for s in stats)\n"
+            "        for stat in stats[:top_n]:\n"
+            "            frame = stat.traceback[0]\n"
+            "            entries.append({\n"
+            "                'filename': frame.filename,\n"
+            "                'lineno': frame.lineno,\n"
+            "                'size_diff_bytes': stat.size,\n"
+            "                'count_diff': stat.count,\n"
+            "            })\n"
+            "        data = {\n"
+            "            'entries': entries,\n"
+            "            'python_tracked_bytes': py_tracked,\n"
+            "        }\n"
+            "        with open(out_path, 'w', encoding='utf-8') as f:\n"
+            "            json.dump(data, f)\n"
+            "    except Exception:\n"
+            "        pass\n\n"
+            "atexit.register(_proctrace_dump_attribution)\n"
+        )
+        sitecustomize_path.write_text(sitecustomize_code, encoding="utf-8")
+
+        child_env = dict(os.environ)
+        child_env["PYTHONTRACEMALLOC"] = str(getattr(args, "attribution_frames", 10))
+        child_env["PROCTRACE_ATTRIBUTION_TOP"] = str(getattr(args, "attribution_top", 10))
+        child_env["PROCTRACE_ATTRIBUTION_FILE"] = str(attr_file)
+        cur_pp = child_env.get("PYTHONPATH")
+        child_env["PYTHONPATH"] = f"{temp_dir}{os.pathsep}{cur_pp}" if cur_pp else temp_dir
+
     our_before = snapshot_resources()
     t_start = time.monotonic_ns()
 
     try:
-        proc = subprocess.Popen(args.command)
-    except FileNotFoundError as err:
-        print(f"proctrace run: command not found: {args.command[0]!r} ({err})", file=sys.stderr)
-        return 127
-
-    peak_rss_bytes = 0
-    target_rss_bytes = 0
-
-    while proc.poll() is None:
         try:
-            rss_mb, _ = _read_proc_mem(proc.pid)
-            rss_b = int(rss_mb * _BYTES_PER_MB)
-            if rss_b > peak_rss_bytes:
-                peak_rss_bytes = rss_b
-            target_rss_bytes = rss_b
-        except (ProcessLookupError, OSError):
-            pass
-        time.sleep(0.005)
+            proc = subprocess.Popen(args.command, env=child_env)
+        except FileNotFoundError as err:
+            print(f"proctrace run: command not found: {args.command[0]!r} ({err})", file=sys.stderr)
+            return 127
 
-    proc.wait()
+        peak_rss_bytes = 0
+        target_rss_bytes = 0
 
-    elapsed_ns = time.monotonic_ns() - t_start
-    our_after = snapshot_resources()
+        while proc.poll() is None:
+            try:
+                rss_mb, _ = _read_proc_mem(proc.pid)
+                rss_b = int(rss_mb * _BYTES_PER_MB)
+                if rss_b > peak_rss_bytes:
+                    peak_rss_bytes = rss_b
+                target_rss_bytes = rss_b
+            except (ProcessLookupError, OSError):
+                pass
+            time.sleep(0.005)
 
-    if peak_rss_bytes > 0:
-        rss_delta = peak_rss_bytes
-    elif target_rss_bytes > 0:
-        rss_delta = target_rss_bytes
-    else:
-        rss_delta = our_after.rss_bytes - our_before.rss_bytes
+        proc.wait()
 
-    if args.json:
-        result = {
-            "command": args.command,
-            "exit_code": proc.returncode,
-            "rss_delta_bytes": rss_delta,
-            "rss_delta_mb": rss_delta / _BYTES_PER_MB,
-            "elapsed_ms": elapsed_ns / _NS_PER_MS,
-        }
-        print(json.dumps(result, indent=2))
-    else:
-        mb = rss_delta / _BYTES_PER_MB
-        sign = "+" if mb >= 0 else ""
-        print(
-            f"\n[proctrace] {' '.join(args.command)}\n"
-            f"  exit code : {proc.returncode}\n"
-            f"  rss delta : {sign}{mb:.2f} MB\n"
-            f"  elapsed   : {elapsed_ns / _NS_PER_MS:.1f} ms\n",
-            file=sys.stderr,
-        )
+        elapsed_ns = time.monotonic_ns() - t_start
+        our_after = snapshot_resources()
 
-    return proc.returncode
+        if peak_rss_bytes > 0:
+            rss_delta = peak_rss_bytes
+        elif target_rss_bytes > 0:
+            rss_delta = target_rss_bytes
+        else:
+            rss_delta = our_after.rss_bytes - our_before.rss_bytes
+
+        alloc_report = None
+        if attribution_enabled and attr_file and attr_file.is_file():
+            try:
+                raw_json = json.loads(attr_file.read_text(encoding="utf-8"))
+                from proctrace.alloc import AllocationReport
+                raw_json["rss_delta_bytes"] = rss_delta
+                raw_json["native_estimate_bytes"] = max(
+                    0, rss_delta - raw_json.get("python_tracked_bytes", 0)
+                )
+                alloc_report = AllocationReport.from_dict(raw_json)
+            except Exception:
+                pass
+
+        if args.json:
+            result = {
+                "command": args.command,
+                "exit_code": proc.returncode,
+                "rss_delta_bytes": rss_delta,
+                "rss_delta_mb": rss_delta / _BYTES_PER_MB,
+                "elapsed_ms": elapsed_ns / _NS_PER_MS,
+            }
+            if alloc_report is not None:
+                result["allocations"] = alloc_report.to_dict()
+            print(json.dumps(result, indent=2))
+        else:
+            mb = rss_delta / _BYTES_PER_MB
+            sign = "+" if mb >= 0 else ""
+            print(
+                f"\n[proctrace] {' '.join(args.command)}\n"
+                f"  exit code : {proc.returncode}\n"
+                f"  rss delta : {sign}{mb:.2f} MB\n"
+                f"  elapsed   : {elapsed_ns / _NS_PER_MS:.1f} ms\n",
+                file=sys.stderr,
+            )
+            if alloc_report is not None:
+                print("Top Allocations:\n" + alloc_report.report() + "\n", file=sys.stderr)
+
+        return proc.returncode
+    finally:
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def cmd_dump(args: argparse.Namespace) -> int:      #Send a POSIX signal to trigger a proctrace thread dump in the target process

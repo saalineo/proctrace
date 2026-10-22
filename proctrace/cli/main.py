@@ -26,6 +26,26 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--memory", action="store_true", default=True)
     run_p.add_argument("--fds", action="store_true", default=False)
     run_p.add_argument(
+        "--attribution",
+        action="store_true",
+        default=False,
+        help="Enable memory allocation attribution for Python child processes",
+    )
+    run_p.add_argument(
+        "--attribution-top",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Number of top allocation sites to report (default: 10)",
+    )
+    run_p.add_argument(
+        "--attribution-frames",
+        type=int,
+        default=10,
+        metavar="FRAMES",
+        help="Number of stack frames for allocation traces (default: 10)",
+    )
+    run_p.add_argument(
         "--json", action="store_true", default=False, help="Output as JSON to stdout"
     )
     run_p.add_argument("command", nargs=argparse.REMAINDER)

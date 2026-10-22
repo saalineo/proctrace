@@ -12,6 +12,12 @@ import pathlib
 from typing import Final
 
 from proctrace._proctrace_core import probe_version as _probe_version
+from proctrace.alloc import (
+    AllocEntry,
+    AllocationReport,
+    AllocationTracker,
+    ObjectGrowth,
+)
 from proctrace.core import (
     ConfigurationError,
     Error,
@@ -62,9 +68,13 @@ def help() -> None:
 
 
 __all__ = [
+    "AllocEntry",
+    "AllocationReport",
+    "AllocationTracker",
     "ConfigurationError",
     "Error",
     "Limits",
+    "ObjectGrowth",
     "ProcessNotFoundError",
     "ProctraceError",
     "ResourceDelta",

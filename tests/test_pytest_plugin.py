@@ -198,3 +198,19 @@ class TestPytestPlugin:
         )
         res3.assert_outcomes(failed=1)
         res3.stdout.fnmatch_lines(["*peak RSS regressed*"])
+
+    def test_marker_attribution_on_violation(self, pytester):
+        """When a test violates a resource limit with attribution=True, the failure output contains the allocation report."""
+        pytester.makepyfile("""
+            import pytest
+
+            leaked = []
+
+            @pytest.mark.proctrace(max_rss_mb=0.1, attribution=True)
+            def test_violating_alloc():
+                leaked.append(bytearray(15 * 1024 * 1024))
+        """)
+        result = pytester.runpytest_subprocess()
+        result.assert_outcomes(failed=1)
+        result.stdout.fnmatch_lines(["*Top allocations:*", "*python-tracked:*"])
+
