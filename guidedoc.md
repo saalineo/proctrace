@@ -467,3 +467,46 @@ def test_clean_service():
 
 ### Why do async tests show 2 leaked FDs on the first test?
 The standard library `asyncio` event loop creates an internal `epoll` file descriptor and a self-pipe on initialization. `proctrace`'s pytest plugin automatically warms up the event loop in `pytest_sessionstart` to eliminate this first-test artifact.
+
+### How to Access In-Terminal Help & Documentation
+
+`proctrace` provides two ways to access documentation directly from Python:
+
+#### 1. Interactive Developer Manual (`proctrace.help()`)
+
+To read this full technical manual and architecture guide directly in your terminal:
+
+```python
+import proctrace
+
+proctrace.help()
+```
+
+This loads the bundled technical guide inside your terminal's interactive pager (`less`/`more`), allowing seamless navigation without flooding your console:
+- **Spacebar**: Scroll down one full page
+- **Enter / Down Arrow**: Scroll down one line
+- **b / Up Arrow**: Scroll back up
+- **/**: Search for keywords (e.g., `/attribution`, `/limits`, `/pytest`)
+- **q**: Exit the guide and return to your terminal
+
+#### 2. Symbol & Signature Inspection (`help(...)`)
+
+To inspect function signatures, argument types, defaults, and docstrings for individual functions or classes:
+
+```python
+import proctrace
+
+# Inspect context managers and decorators
+help(proctrace.watch)
+help(proctrace.probe)
+
+# Inspect configuration and result types
+help(proctrace.Limits)
+help(proctrace.ResourceDelta)
+
+# View module summary and all exported symbols
+help(proctrace)
+```
+
+This uses Python's standard `pydoc` inspection with interactive page navigation.
+

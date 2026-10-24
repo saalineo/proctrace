@@ -48,22 +48,62 @@ from proctrace.testing import Limits, load_baseline, save_baseline
 __version__: Final[str] = _probe_version()
 
 _GUIDE_PATH: Final[pathlib.Path] = (
-    pathlib.Path(__file__).resolve().parent.parent / "guidedoc.md"
+    pathlib.Path(__file__).resolve().parent / "guidedoc.md"
 )
 _FALLBACK_GUIDE_PATH: Final[pathlib.Path] = (
-    pathlib.Path(__file__).resolve().parent.parent / "GUIDE.md"
+    pathlib.Path(__file__).resolve().parent.parent / "guidedoc.md"
 )
+
+
+def _read_guide() -> str | None:
+    # 1. Package resources (installed wheel / distribution)
+    try:
+        import importlib.resources as importlib_resources
+
+        for name in ("guidedoc.md", "GUIDE.md"):
+            ref = importlib_resources.files("proctrace").joinpath(name)
+            if ref.is_file():
+                text = ref.read_text(encoding="utf-8")
+                if text.strip().startswith("../") and len(text.strip().splitlines()) == 1:
+                    resolved = (pathlib.Path(__file__).resolve().parent / text.strip()).resolve()
+                    if resolved.is_file():
+                        return resolved.read_text(encoding="utf-8")
+                return text
+    except Exception:
+        pass
+
+    # 2. Filesystem candidates (package dir, repo root, docs dir)
+    pkg_dir = pathlib.Path(__file__).resolve().parent
+    candidates = (
+        _GUIDE_PATH,
+        pkg_dir / "GUIDE.md",
+        _FALLBACK_GUIDE_PATH,
+        pkg_dir.parent / "GUIDE.md",
+        pkg_dir.parent / "docs" / "guidedoc.md",
+    )
+    for path in candidates:
+        if path.is_file():
+            try:
+                text = path.read_text(encoding="utf-8")
+                if text.strip().startswith("../") and len(text.strip().splitlines()) == 1:
+                    resolved = (path.parent / text.strip()).resolve()
+                    if resolved.is_file():
+                        return resolved.read_text(encoding="utf-8")
+                return text
+            except OSError:
+                continue
+
+    return None
 
 
 def help() -> None:
-    """Print the developer guide to standard output if available."""
-    for path in (_GUIDE_PATH, _FALLBACK_GUIDE_PATH):
-        if path.is_file():
-            try:
-                print(path.read_text(encoding="utf-8"))
-                return
-            except OSError:
-                pass
+    """Print the developer guide to standard output or interactive pager if available."""
+    content = _read_guide()
+    if content is not None:
+        import pydoc
+
+        pydoc.pager(content)
+        return
     print("Guide not found. See the project repository for documentation.")
 
 

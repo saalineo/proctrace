@@ -15,14 +15,22 @@ from proctrace.testing.baseline import (
     save_baseline,
 )
 from proctrace.testing.limits import Limits
-from proctrace.testing.pytest_plugin import (
-    PROCTRACE_KEY,
-    PROCTRACE_VIOLATIONS_KEY,
-    ProctracePlugin,
-    proctrace_probe,
-    pytest_addoption,
-    pytest_configure,
-)
+try:
+    from proctrace.testing.pytest_plugin import (
+        PROCTRACE_KEY,
+        PROCTRACE_VIOLATIONS_KEY,
+        ProctracePlugin,
+        proctrace_probe,
+        pytest_addoption,
+        pytest_configure,
+    )
+except ImportError:
+    PROCTRACE_KEY = None
+    PROCTRACE_VIOLATIONS_KEY = None
+    ProctracePlugin = None
+    proctrace_probe = None
+    pytest_addoption = None
+    pytest_configure = None
 
 __all__ = [
     "BaselineData",

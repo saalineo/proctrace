@@ -91,3 +91,20 @@ def test_subpackage_exports():
     assert hasattr(testing, "proctrace_probe")
     assert hasattr(cli, "main")
     assert hasattr(cli, "build_parser")
+
+
+def test_help_prints_guide(capsys):
+    proctrace.help()
+    captured = capsys.readouterr()
+    assert "Technical Guide & Developer Manual" in captured.out
+    assert "Architecture & Core Mechanics" in captured.out
+    assert "Guide not found" not in captured.out
+
+
+def test_help_fallback(monkeypatch, capsys):
+    # Simulate missing guide
+    monkeypatch.setattr(proctrace, "_read_guide", lambda: None)
+    proctrace.help()
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Guide not found. See the project repository for documentation."
+
