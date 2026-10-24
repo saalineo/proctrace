@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, fields
 from typing import TYPE_CHECKING, Any, Final
 
 from proctrace.timeline import Timeline
@@ -31,6 +31,21 @@ class ResourceDelta:
         sample_interval_ms: Sampler polling interval in milliseconds.
         timeline: Optional high-frequency timeline of resource usage.
         peak_at_ms: Relative timestamp in milliseconds when peak RSS was reached.
+        allocations: Optional memory allocation attribution report.
+        object_growth: Optional object count growth delta dictionary.
+        cpu_user_ns: User-mode CPU time difference in nanoseconds.
+        cpu_sys_ns: Kernel-mode CPU time difference in nanoseconds.
+        ctx_switches_vol: Voluntary context switch difference.
+        ctx_switches_invol: Involuntary context switch difference.
+        minor_faults: Minor page fault difference.
+        major_faults: Major page fault difference.
+        io_read_bytes: Actual disk read bytes difference.
+        io_write_bytes: Actual disk write bytes difference.
+        io_rchar_bytes: Syscall read bytes difference.
+        io_wchar_bytes: Syscall write bytes difference.
+        sockets_by_state: Mapping of open TCP socket state names to active socket count.
+        socket_deltas: Net change in socket counts by state over the watched block.
+        busiest_threads: List of (thread_name, cpu_percent) sorted by highest CPU.
     """
 
     rss_delta_bytes: int
@@ -47,6 +62,19 @@ class ResourceDelta:
     peak_at_ms: float | None = None
     allocations: AllocationReport | None = None
     object_growth: dict[str, int] | None = None
+    cpu_user_ns: int = 0
+    cpu_sys_ns: int = 0
+    ctx_switches_vol: int = 0
+    ctx_switches_invol: int = 0
+    minor_faults: int = 0
+    major_faults: int = 0
+    io_read_bytes: int = 0
+    io_write_bytes: int = 0
+    io_rchar_bytes: int = 0
+    io_wchar_bytes: int = 0
+    sockets_by_state: dict[str, int] = field(default_factory=dict)
+    socket_deltas: dict[str, int] = field(default_factory=dict)
+    busiest_threads: list[tuple[str, float]] = field(default_factory=list)
 
     @property
     def sample_interval_s(self) -> float:
@@ -79,6 +107,44 @@ class ResourceDelta:
         """Elapsed wall-clock time in milliseconds."""
         return self.elapsed_ns / _NS_PER_MS
 
+    @property
+    def cpu_user_s(self) -> float:
+        """User CPU time in seconds."""
+        return self.cpu_user_ns / 1_000_000_000.0
+
+    @property
+    def cpu_sys_s(self) -> float:
+        """System CPU time in seconds."""
+        return self.cpu_sys_ns / 1_000_000_000.0
+
+    @property
+    def cpu_percent(self) -> float:
+        """CPU utilization percentage across all cores during the interval."""
+        if self.elapsed_ns <= 0:
+            return 0.0
+        elapsed_s = self.elapsed_ns / 1_000_000_000.0
+        return ((self.cpu_user_s + self.cpu_sys_s) / elapsed_s) * 100.0
+
+    @property
+    def io_read_mb(self) -> float:
+        """Disk read bytes expressed in megabytes (MiB)."""
+        return self.io_read_bytes / _BYTES_PER_MB
+
+    @property
+    def io_write_mb(self) -> float:
+        """Disk write bytes expressed in megabytes (MiB)."""
+        return self.io_write_bytes / _BYTES_PER_MB
+
+    @property
+    def io_rchar_mb(self) -> float:
+        """Syscall read bytes expressed in megabytes (MiB)."""
+        return self.io_rchar_bytes / _BYTES_PER_MB
+
+    @property
+    def io_wchar_mb(self) -> float:
+        """Syscall write bytes expressed in megabytes (MiB)."""
+        return self.io_wchar_bytes / _BYTES_PER_MB
+
     def to_dict(self, include_timeline: bool = False) -> dict[str, Any]:
         """Convert the ResourceDelta to a dictionary.
 
@@ -110,7 +176,8 @@ class ResourceDelta:
         if isinstance(growth_data, dict):
             from proctrace.alloc import ObjectGrowth
             data["object_growth"] = ObjectGrowth(growth_data)
-        return cls(**data)
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
     def report(self) -> str:
         """Format a human-readable, ANSI-colored summary report."""
@@ -169,6 +236,51 @@ class ResourceDelta:
             f"  child procs     {fmt_count(self.child_delta)}",
             f"  elapsed         {self.elapsed_ms:.1f} ms",
         ]
+
+        if self.cpu_user_ns > 0 or self.cpu_sys_ns > 0:
+            cpu_str = f"{self.cpu_user_s:.3f}s user / {self.cpu_sys_s:.3f}s sys ({self.cpu_percent:.1f}%)"
+            lines.append(f"  cpu time        {cpu_str}")
+
+        if self.ctx_switches_vol > 0 or self.ctx_switches_invol > 0:
+            ctx_str = f"{self.ctx_switches_vol} vol / {self.ctx_switches_invol} invol"
+            lines.append(f"  ctx switches    {ctx_str}")
+
+        if self.minor_faults > 0 or self.major_faults > 0:
+            fault_str = f"{self.minor_faults} minor / {self.major_faults} major"
+            lines.append(f"  page faults     {fault_str}")
+
+        if (
+            self.io_read_bytes > 0
+            or self.io_write_bytes > 0
+            or self.io_rchar_bytes > 0
+            or self.io_wchar_bytes > 0
+        ):
+            io_str = f"read {fmt_bytes(self.io_read_bytes)} / write {fmt_bytes(self.io_write_bytes)}"
+            lines.append(f"  disk io         {io_str}")
+
+        if self.sockets_by_state or self.socket_deltas:
+            sock_parts = []
+            for state, count in sorted(self.sockets_by_state.items()):
+                delta = self.socket_deltas.get(state, 0)
+                if delta != 0:
+                    delta_str = f" ({fmt_count(delta)})"
+                else:
+                    delta_str = ""
+                sock_parts.append(f"{state}: {count}{delta_str}")
+            lines.append(f"  sockets         {', '.join(sock_parts) if sock_parts else 'none'}")
+
+        if self.busiest_threads:
+            busiest_str = ", ".join(f"{name} ({pct:.1f}%)" for name, pct in self.busiest_threads[:3])
+            lines.append(f"  busiest threads {busiest_str}")
+
+        if (
+            (self.cpu_user_ns > 0 or self.cpu_sys_ns > 0)
+            and self.cpu_percent < 20.0
+            and self.elapsed_ms >= 200.0
+        ):
+            hint_str = yellow("mostly waiting (I/O or lock bound)")
+            lines.append(f"  hint            {hint_str}")
+
         return "\n".join(lines)
 
 

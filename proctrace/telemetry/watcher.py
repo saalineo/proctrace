@@ -80,12 +80,20 @@ class ResourceWatcher:
         attribution_top: int | None = None,
         frames: int = 1,
         attribution_frames: int | None = None,
+        cpu: bool = False,
+        io: bool = False,
+        sockets: bool = False,
+        threads_cpu: bool = False,
     ) -> None:
         self.memory = memory
         self.fds = fds
         self.threads = threads
         self.children = children
         self.timeline = timeline
+        self.cpu = cpu
+        self.io = io
+        self.sockets = sockets
+        self.threads_cpu = threads_cpu
         resolved_interval = (
             sample_interval
             if sample_interval is not None
@@ -116,6 +124,7 @@ class ResourceWatcher:
 
         # State captured at block entry
         self._snapshot_before: ResourceSnapshot | None = None
+        self._extended_before: Any = None
         self._fds_before: list[str] = []
         self._threads_before: list[str] = []
         self._children_before: int = 0
@@ -132,6 +141,15 @@ class ResourceWatcher:
         """Start resource tracking and spawn the background sampler if enabled."""
         if self.memory or self.fds or self.timeline:
             self._snapshot_before = snapshot_resources()
+
+        if self.cpu or self.io or self.sockets or self.threads_cpu:
+            from proctrace._proctrace_core import snapshot_extended
+            self._extended_before = snapshot_extended(
+                cpu=self.cpu,
+                io=self.io,
+                sockets=self.sockets,
+                threads_cpu=self.threads_cpu,
+            )
 
         if self.fds:
             self._fds_before = list_open_fds()
@@ -178,6 +196,17 @@ class ResourceWatcher:
             else None
         )
 
+        extended_after = None
+        if self.cpu or self.io or self.sockets or self.threads_cpu:
+            from proctrace._proctrace_core import snapshot_extended
+
+            extended_after = snapshot_extended(
+                cpu=self.cpu,
+                io=self.io,
+                sockets=self.sockets,
+                threads_cpu=self.threads_cpu,
+            )
+
         peak_rss = 0
         peak_at_ms: float | None = None
         timeline_obj: Timeline | None = None
@@ -207,7 +236,6 @@ class ResourceWatcher:
                 self._sampler = None
 
         if snapshot_after is not None and snapshot_after.rss_bytes > peak_rss:
-
             peak_rss = snapshot_after.rss_bytes
             peak_at_ms = (exit_time_ns - self._enter_time_ns) / 1_000_000.0
         fds_after = list_open_fds() if self.fds else []
@@ -248,6 +276,62 @@ class ResourceWatcher:
         child_delta = children_after - self._children_before
         elapsed_ns = exit_time_ns - self._enter_time_ns
 
+        # Compute extended resource metrics
+        cpu_user_ns = 0
+        cpu_sys_ns = 0
+        ctx_switches_vol = 0
+        ctx_switches_invol = 0
+        minor_faults = 0
+        major_faults = 0
+        io_read_bytes = 0
+        io_write_bytes = 0
+        io_rchar_bytes = 0
+        io_wchar_bytes = 0
+        sockets_by_state: dict[str, int] = {}
+        socket_deltas: dict[str, int] = {}
+        busiest_threads: list[tuple[str, float]] = []
+
+        if extended_after is not None and self._extended_before is not None:
+            eb = self._extended_before
+            ea = extended_after
+            if self.cpu:
+                cpu_user_ns = max(0, ea.cpu_user_ns - eb.cpu_user_ns)
+                cpu_sys_ns = max(0, ea.cpu_sys_ns - eb.cpu_sys_ns)
+                ctx_switches_vol = max(0, ea.vol_ctx - eb.vol_ctx)
+                ctx_switches_invol = max(0, ea.invol_ctx - eb.invol_ctx)
+                minor_faults = max(0, ea.minor_faults - eb.minor_faults)
+                major_faults = max(0, ea.major_faults - eb.major_faults)
+            if self.io:
+                io_read_bytes = max(0, ea.io_read_bytes - eb.io_read_bytes)
+                io_write_bytes = max(0, ea.io_write_bytes - eb.io_write_bytes)
+                io_rchar_bytes = max(0, ea.io_rchar_bytes - eb.io_rchar_bytes)
+                io_wchar_bytes = max(0, ea.io_wchar_bytes - eb.io_wchar_bytes)
+            if self.sockets:
+                sockets_by_state = dict(ea.sockets_by_state)
+                all_states = set(ea.sockets_by_state.keys()) | set(eb.sockets_by_state.keys())
+                for st in all_states:
+                    d = ea.sockets_by_state.get(st, 0) - eb.sockets_by_state.get(st, 0)
+                    if d != 0:
+                        socket_deltas[st] = d
+            if self.threads_cpu:
+                elapsed_s = (exit_time_ns - self._enter_time_ns) / 1_000_000_000.0
+                before_map = {tid: (u, s) for tid, _comm, u, s in eb.thread_cpu}
+                tid_to_pyname = {
+                    t.native_id: t.name
+                    for t in threading.enumerate()
+                    if getattr(t, "native_id", None) is not None
+                }
+                thread_rankings = []
+                for tid, comm, u, s in ea.thread_cpu:
+                    b_u, b_s = before_map.get(tid, (0, 0))
+                    delta_t = max(0, (u - b_u) + (s - b_s))
+                    if elapsed_s > 0 and delta_t > 0:
+                        pct = (delta_t / 1_000_000_000.0) / elapsed_s * 100.0
+                        display_name = tid_to_pyname.get(tid) or comm or f"tid-{tid}"
+                        thread_rankings.append((display_name, round(pct, 2)))
+                thread_rankings.sort(key=lambda x: x[1], reverse=True)
+                busiest_threads = thread_rankings
+
         # Stop attribution tracker and object census AFTER snapshot_after
         # so releasing snapshot memory does not skew process RSS measurements
         allocations_report = None
@@ -260,6 +344,7 @@ class ResourceWatcher:
         object_growth = None
         if self._objects_before is not None:
             from proctrace.alloc import ObjectGrowth, get_object_census
+
             objects_after = get_object_census()
             growth_counter = objects_after - self._objects_before
             self._objects_before = None
@@ -280,6 +365,19 @@ class ResourceWatcher:
             peak_at_ms=peak_at_ms,
             allocations=allocations_report,
             object_growth=object_growth,
+            cpu_user_ns=cpu_user_ns,
+            cpu_sys_ns=cpu_sys_ns,
+            ctx_switches_vol=ctx_switches_vol,
+            ctx_switches_invol=ctx_switches_invol,
+            minor_faults=minor_faults,
+            major_faults=major_faults,
+            io_read_bytes=io_read_bytes,
+            io_write_bytes=io_write_bytes,
+            io_rchar_bytes=io_rchar_bytes,
+            io_wchar_bytes=io_wchar_bytes,
+            sockets_by_state=sockets_by_state,
+            socket_deltas=socket_deltas,
+            busiest_threads=busiest_threads,
         )
 
         if self.on_exit is not None:
@@ -308,6 +406,10 @@ def watch(
     attribution_top: int | None = None,
     frames: int = 1,
     attribution_frames: int | None = None,
+    cpu: bool = False,
+    io: bool = False,
+    sockets: bool = False,
+    threads_cpu: bool = False,
 ) -> ResourceWatcher:
     """Create and return a ResourceWatcher context manager."""
     return ResourceWatcher(
@@ -322,6 +424,10 @@ def watch(
         attribution_top=attribution_top,
         frames=frames,
         attribution_frames=attribution_frames,
+        cpu=cpu,
+        io=io,
+        sockets=sockets,
+        threads_cpu=threads_cpu,
     )
 
 

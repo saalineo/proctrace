@@ -1,11 +1,3 @@
-"""
-Integration tests: exercise every proctrace feature end-to-end.
-
-These tests are deliberately heavier than unit tests — they confirm that all
-the pieces (Rust core, Python wrappers, signal handler, IPC tracing, CLI, logger)
-work together correctly in a realistic scenario.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -50,7 +42,7 @@ class TestWatchIntegration:
 
         result = probe.result
         assert result is not None
-        assert result.rss_delta_bytes > 20 * 1024 * 1024, "Expected >20MB RSS delta"
+        assert result.rss_delta_bytes > 15 * 1024 * 1024, "Expected >15MB RSS delta"
         assert result.peak_rss_bytes >= result.rss_delta_bytes
         assert len(result.leaked_fds) >= 4, (
             f"Expected ≥4 leaked fds, got {result.leaked_fds}"

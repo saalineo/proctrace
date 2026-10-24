@@ -12,6 +12,28 @@ class ResourceSnapshot:
     def rss_mb(self) -> float: ...
     def vms_mb(self) -> float: ...
 
+class ExtendedResourceSnapshot:
+    rss_bytes: int
+    vms_bytes: int
+    open_fds: int
+    timestamp_ns: int
+    cpu_user_ns: int
+    cpu_sys_ns: int
+    vol_ctx: int
+    invol_ctx: int
+    minor_faults: int
+    major_faults: int
+    io_read_bytes: int
+    io_write_bytes: int
+    io_rchar_bytes: int
+    io_wchar_bytes: int
+    sockets_by_state: dict[str, int]
+    thread_cpu: list[tuple[int, str, int, int]]
+    def rss_mb(self) -> float: ...
+    def vms_mb(self) -> float: ...
+    def cpu_user_s(self) -> float: ...
+    def cpu_sys_s(self) -> float: ...
+
 class BackgroundSampler:
     DEFAULT_CAPACITY: int
     def __new__(cls, cap: int | None = None) -> Self: ...
@@ -46,5 +68,11 @@ class SocketStats:
     def report(self) -> str: ...
 
 def snapshot_resources() -> ResourceSnapshot: ...
+def snapshot_extended(
+    cpu: bool = False,
+    io: bool = False,
+    sockets: bool = False,
+    threads_cpu: bool = False,
+) -> ExtendedResourceSnapshot: ...
 def list_open_fds() -> list[str]: ...
 def register_signal_pipe(signal_num: int) -> tuple[int, int]: ...

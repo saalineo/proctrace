@@ -66,6 +66,10 @@ class _BaseProbeWrapper:
         frames: int = 1,
         attribution_frames: int | None = None,
         warmup: int = 0,
+        cpu: bool = False,
+        io: bool = False,
+        sockets: bool = False,
+        threads_cpu: bool = False,
     ) -> None:
         self._fn = fn
         self._memory = memory
@@ -77,6 +81,10 @@ class _BaseProbeWrapper:
         self._store = store
         self._timeline = timeline
         self._attribution = attribution
+        self._cpu = cpu
+        self._io = io
+        self._sockets = sockets
+        self._threads_cpu = threads_cpu
         self._top = attribution_top if attribution_top is not None else top
         self._frames = attribution_frames if attribution_frames is not None else frames
         self._warmup = max(0, warmup)
@@ -103,6 +111,10 @@ class _BaseProbeWrapper:
             attribution=self._attribution,
             top=self._top,
             frames=self._frames,
+            cpu=self._cpu,
+            io=self._io,
+            sockets=self._sockets,
+            threads_cpu=self._threads_cpu,
         )
 
     def _publish_result(self, delta: ResourceDelta | None) -> None:
@@ -155,6 +167,10 @@ class AsyncProbeWrapper(_BaseProbeWrapper):
         frames: int = 1,
         attribution_frames: int | None = None,
         warmup: int = 0,
+        cpu: bool = False,
+        io: bool = False,
+        sockets: bool = False,
+        threads_cpu: bool = False,
     ) -> None:
         super().__init__(
             fn,
@@ -172,6 +188,10 @@ class AsyncProbeWrapper(_BaseProbeWrapper):
             frames=frames,
             attribution_frames=attribution_frames,
             warmup=warmup,
+            cpu=cpu,
+            io=io,
+            sockets=sockets,
+            threads_cpu=threads_cpu,
         )
         if hasattr(inspect, "markcoroutinefunction"):
             inspect.markcoroutinefunction(self)
@@ -207,6 +227,10 @@ def probe(
     frames: int = 1,
     attribution_frames: int | None = None,
     warmup: int = 0,
+    cpu: bool = False,
+    io: bool = False,
+    sockets: bool = False,
+    threads_cpu: bool = False,
 ) -> Callable[[F], F]:
     """Decorator to monitor resource usage during function execution.
 
@@ -219,6 +243,10 @@ def probe(
         output: Output mode ('stderr' or 'none').
         store: Whether to store the last result on function.last_probe_result.
         timeline: Whether to record high-frequency time-series resource samples.
+        cpu: Track user/sys CPU time, context switches, and page faults.
+        io: Track disk read/write bytes and syscall I/O.
+        sockets: Track open sockets by TCP state.
+        threads_cpu: Track per-thread CPU utilization.
 
     Returns:
         Decorated function maintaining original signature and metadata.
@@ -242,6 +270,10 @@ def probe(
                 frames=frames,
                 attribution_frames=attribution_frames,
                 warmup=warmup,
+                cpu=cpu,
+                io=io,
+                sockets=sockets,
+                threads_cpu=threads_cpu,
             )  # type: ignore
         else:
             return SyncProbeWrapper(
@@ -260,6 +292,10 @@ def probe(
                 frames=frames,
                 attribution_frames=attribution_frames,
                 warmup=warmup,
+                cpu=cpu,
+                io=io,
+                sockets=sockets,
+                threads_cpu=threads_cpu,
             )  # type: ignore
 
     return decorator

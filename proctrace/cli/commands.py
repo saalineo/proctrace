@@ -153,19 +153,44 @@ def cmd_run(args: argparse.Namespace) -> int:      #Execute a command in a child
 
         peak_rss_bytes = 0
         target_rss_bytes = 0
+        child_rusage = None
 
-        while proc.poll() is None:
+        if hasattr(os, "wait4"):
             try:
-                rss_mb, _ = _read_proc_mem(proc.pid)
-                rss_b = int(rss_mb * _BYTES_PER_MB)
-                if rss_b > peak_rss_bytes:
-                    peak_rss_bytes = rss_b
-                target_rss_bytes = rss_b
-            except (ProcessLookupError, OSError):
-                pass
-            time.sleep(0.005)
-
-        proc.wait()
+                while True:
+                    pid_res, status_res, ru = os.wait4(proc.pid, os.WNOHANG)
+                    if pid_res != 0:
+                        child_rusage = ru
+                        if os.WIFEXITED(status_res):
+                            proc.returncode = os.WEXITSTATUS(status_res)
+                        elif os.WIFSIGNALED(status_res):
+                            proc.returncode = -os.WTERMSIG(status_res)
+                        else:
+                            proc.returncode = 0
+                        break
+                    try:
+                        rss_mb, _ = _read_proc_mem(proc.pid)
+                        rss_b = int(rss_mb * _BYTES_PER_MB)
+                        if rss_b > peak_rss_bytes:
+                            peak_rss_bytes = rss_b
+                        target_rss_bytes = rss_b
+                    except (ProcessLookupError, OSError):
+                        pass
+                    time.sleep(0.005)
+            except ChildProcessError:
+                proc.wait()
+        else:
+            while proc.poll() is None:
+                try:
+                    rss_mb, _ = _read_proc_mem(proc.pid)
+                    rss_b = int(rss_mb * _BYTES_PER_MB)
+                    if rss_b > peak_rss_bytes:
+                        peak_rss_bytes = rss_b
+                    target_rss_bytes = rss_b
+                except (ProcessLookupError, OSError):
+                    pass
+                time.sleep(0.005)
+            proc.wait()
 
         elapsed_ns = time.monotonic_ns() - t_start
         our_after = snapshot_resources()
@@ -182,6 +207,7 @@ def cmd_run(args: argparse.Namespace) -> int:      #Execute a command in a child
             try:
                 raw_json = json.loads(attr_file.read_text(encoding="utf-8"))
                 from proctrace.alloc import AllocationReport
+
                 raw_json["rss_delta_bytes"] = rss_delta
                 raw_json["native_estimate_bytes"] = max(
                     0, rss_delta - raw_json.get("python_tracked_bytes", 0)
@@ -198,19 +224,44 @@ def cmd_run(args: argparse.Namespace) -> int:      #Execute a command in a child
                 "rss_delta_mb": rss_delta / _BYTES_PER_MB,
                 "elapsed_ms": elapsed_ns / _NS_PER_MS,
             }
+            if child_rusage is not None:
+                elapsed_s = elapsed_ns / 1_000_000_000.0 if elapsed_ns > 0 else 1.0
+                cpu_total = child_rusage.ru_utime + child_rusage.ru_stime
+                result["cpu_user_s"] = child_rusage.ru_utime
+                result["cpu_sys_s"] = child_rusage.ru_stime
+                result["cpu_percent"] = (cpu_total / elapsed_s) * 100.0
+                result["minor_faults"] = child_rusage.ru_minflt
+                result["major_faults"] = child_rusage.ru_majflt
+                result["ctx_switches_vol"] = child_rusage.ru_nvcsw
+                result["ctx_switches_invol"] = child_rusage.ru_nivcsw
             if alloc_report is not None:
                 result["allocations"] = alloc_report.to_dict()
             print(json.dumps(result, indent=2))
         else:
             mb = rss_delta / _BYTES_PER_MB
             sign = "+" if mb >= 0 else ""
-            print(
-                f"\n[proctrace] {' '.join(args.command)}\n"
-                f"  exit code : {proc.returncode}\n"
-                f"  rss delta : {sign}{mb:.2f} MB\n"
-                f"  elapsed   : {elapsed_ns / _NS_PER_MS:.1f} ms\n",
-                file=sys.stderr,
-            )
+            lines = [
+                f"\n[proctrace] {' '.join(args.command)}",
+                f"  exit code : {proc.returncode}",
+                f"  rss delta : {sign}{mb:.2f} MB",
+                f"  elapsed   : {elapsed_ns / _NS_PER_MS:.1f} ms",
+            ]
+            if child_rusage is not None and (
+                child_rusage.ru_utime > 0 or child_rusage.ru_stime > 0
+            ):
+                elapsed_s = elapsed_ns / 1_000_000_000.0 if elapsed_ns > 0 else 1.0
+                cpu_total = child_rusage.ru_utime + child_rusage.ru_stime
+                cpu_pct = (cpu_total / elapsed_s) * 100.0
+                lines.append(
+                    f"  cpu time  : {child_rusage.ru_utime:.3f}s user / {child_rusage.ru_stime:.3f}s sys ({cpu_pct:.1f}%)"
+                )
+                lines.append(
+                    f"  faults    : {child_rusage.ru_minflt} minor / {child_rusage.ru_majflt} major"
+                )
+                lines.append(
+                    f"  ctx switch: {child_rusage.ru_nvcsw} vol / {child_rusage.ru_nivcsw} invol"
+                )
+            print("\n".join(lines) + "\n", file=sys.stderr)
             if alloc_report is not None:
                 print("Top Allocations:\n" + alloc_report.report() + "\n", file=sys.stderr)
 

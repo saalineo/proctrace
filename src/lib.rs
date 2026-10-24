@@ -9,7 +9,7 @@ mod resources;
 mod sampler;
 
 use ipc_probe::{IpcStats, SocketStats};
-use resources::ResourceSnapshot;
+use resources::{ExtendedResourceSnapshot, ResourceSnapshot};
 pub use sampler::{BackgroundSampler, Sample, DEFAULT_SAMPLE_CAPACITY};
 
 #[pyfunction]
@@ -20,6 +20,17 @@ fn probe_version() -> &'static str {
 #[pyfunction]
 fn snapshot_resources() -> PyResult<ResourceSnapshot> {
     resources::snapshot().map_err(Into::into)
+}
+
+#[pyfunction]
+#[pyo3(signature = (cpu=false, io=false, sockets=false, threads_cpu=false))]
+fn snapshot_extended(
+    cpu: bool,
+    io: bool,
+    sockets: bool,
+    threads_cpu: bool,
+) -> PyResult<ExtendedResourceSnapshot> {
+    resources::snapshot_extended(cpu, io, sockets, threads_cpu).map_err(Into::into)
 }
 
 #[pyfunction]
@@ -37,10 +48,12 @@ fn register_signal_pipe(signal_num: i32) -> PyResult<(i32, i32)> {
 fn _proctrace_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(probe_version, m)?)?;
     m.add_function(wrap_pyfunction!(snapshot_resources, m)?)?;
+    m.add_function(wrap_pyfunction!(snapshot_extended, m)?)?;
     m.add_function(wrap_pyfunction!(list_open_fds, m)?)?;
     #[cfg(unix)]
     m.add_function(wrap_pyfunction!(register_signal_pipe, m)?)?;
     m.add_class::<ResourceSnapshot>()?;
+    m.add_class::<ExtendedResourceSnapshot>()?;
     m.add_class::<BackgroundSampler>()?;
     m.add_class::<IpcStats>()?;
     m.add_class::<SocketStats>()?;
