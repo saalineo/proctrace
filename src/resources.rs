@@ -112,7 +112,7 @@ pub struct ExtendedResourceSnapshot {
 
     // Per-thread CPU tuples: (tid, comm, user_ns, sys_ns)
     #[pyo3(get)]
-    pub thread_cpu: Vec<(u32, String, u64, u64)>,
+    pub thread_cpu: Vec<(u64, String, u64, u64)>,
 }
 
 #[pymethods]

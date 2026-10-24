@@ -222,7 +222,7 @@ pub(crate) fn tcp_state_name(st_hex: &str) -> &'static str {
     }
 }
 
-fn collect_thread_cpu() -> Vec<(u32, String, u64, u64)> {
+fn collect_thread_cpu() -> Vec<(u64, String, u64, u64)> {
     let mut threads = Vec::new();
     let clk_tck = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
 
@@ -242,14 +242,14 @@ fn collect_thread_cpu() -> Vec<(u32, String, u64, u64)> {
 pub(crate) fn parse_thread_stat_line(
     content: &str,
     clk_tck: libc::c_long,
-) -> Option<(u32, String, u64, u64)> {
+) -> Option<(u64, String, u64, u64)> {
     let open_idx = content.find('(')?;
     let close_idx = content.rfind(')')?;
     if close_idx <= open_idx {
         return None;
     }
 
-    let tid = content[..open_idx].trim().parse::<u32>().ok()?;
+    let tid = content[..open_idx].trim().parse::<u64>().ok()?;
     let comm = content[open_idx + 1..close_idx].to_string();
 
     let rest = &content[close_idx + 1..];
