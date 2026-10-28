@@ -33,3 +33,7 @@ proctrace.log
 
 # macOS
 .DS_Store
+
+# Local publish scripts
+publish.sh
+publish*.sh
