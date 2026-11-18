@@ -40,7 +40,15 @@ def _read_proc_mem(pid: int) -> tuple[float, float]:
                 vms_kb = int(line.split()[1])
         return rss_kb / 1024.0, vms_kb / 1024.0
 
-    # Fallback on non-Linux platforms: ps reports RSS and VSZ in KB
+    if sys.platform == "win32":
+        from proctrace._proctrace_core import snapshot_pid
+
+        info = snapshot_pid(pid)
+        if info is None:
+            raise ProcessNotFoundError(f"Process {pid} terminated or inaccessible")
+        return info[0] / _BYTES_PER_MB, info[1] / _BYTES_PER_MB
+
+    # Fallback on other platforms: ps reports RSS and VSZ in KB
     try:
         result = subprocess.run(
             ["ps", "-p", str(pid), "-o", "rss=,vsz="],
@@ -66,6 +74,11 @@ def _read_proc_fds(pid: int) -> int:
             return len(os.listdir(f"/proc/{pid}/fd"))
         except (OSError, FileNotFoundError):
             return 0
+    if sys.platform == "win32":
+        from proctrace._proctrace_core import snapshot_pid
+
+        info = snapshot_pid(pid)
+        return info[2] if info is not None else 0
     return 0
 
 
@@ -272,6 +285,13 @@ def cmd_run(args: argparse.Namespace) -> int:      #Execute a command in a child
 
 
 def cmd_dump(args: argparse.Namespace) -> int:      #Send a POSIX signal to trigger a proctrace thread dump in the target process
+    if sys.platform == "win32":
+        print(
+            "[proctrace] 'dump' relies on POSIX signals and is not supported on Windows.",
+            file=sys.stderr,
+        )
+        return 1
+
     sig_name = args.signal
     sig_num = getattr(signal, sig_name, None)
     if sig_num is None:

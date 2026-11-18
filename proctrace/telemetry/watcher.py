@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import threading
 import time
 from collections import Counter
@@ -29,6 +30,10 @@ _DEFAULT_SUBPROCESS_TIMEOUT: Final[float] = 2.0  # seconds
 
 def _count_children() -> int:
     """Count child processes of the current process."""
+    if sys.platform == "win32":
+        from proctrace._proctrace_core import count_children
+
+        return count_children()
     proc_children = Path(f"/proc/{os.getpid()}/task/{os.getpid()}/children")
     try:
         children_str = proc_children.read_text(encoding="utf-8")

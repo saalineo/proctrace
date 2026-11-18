@@ -13,7 +13,7 @@
   <a href="https://github.com/proctrace/proctrace/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://pypi.org/project/proctrace/"><img src="https://img.shields.io/badge/python-%E2%89%A53.10-blue" alt="Python Version"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-2021-orange.svg" alt="Rust 2021"></a>
-  <a href="#platform-support"><img src="https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-green.svg" alt="Platforms"></a>
+  <a href="#platform-support"><img src="https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-green.svg" alt="Platforms"></a>
 </p>
 
 ---
@@ -149,7 +149,7 @@ maturin develop --release
 |---|---|---|---|
 | **Linux** | x86_64, aarch64 | **Tier 1 (Complete)** | `/proc/self/statm`, `/proc/self/fd`, `getrusage`, `ioctl(FIONREAD)` |
 | **macOS** | Apple Silicon, x86_64 | **Tier 1 (Complete)** | `mach_task_self()`, `proc_pidinfo()`, `kqueue`, `proc_listpids()` |
-| **Windows** | x86_64 | *Under Construction* | Win32 `GetProcessMemoryInfo`, handle snapshotting |
+| **Windows** | x64, x86 | **Tier 2 (Beta)** | `GetProcessMemoryInfo`, `GetProcessHandleCount`, `GetProcessTimes`, `GetProcessIoCounters`, `GetExtendedTcpTable`. No signal-triggered dumps (`dump`, `install_signal_handler`); context-switch counts, major faults and `list_open_fds` are unavailable. |
 
 ---
 

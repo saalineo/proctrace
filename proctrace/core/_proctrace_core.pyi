@@ -3,6 +3,10 @@ from typing import Self
 DEFAULT_SAMPLE_CAPACITY: int
 
 def probe_version() -> str: ...
+def snapshot_pid(pid: int) -> tuple[int, int, int] | None:
+    """Windows only: (rss_bytes, vms_bytes, handle_count) for a pid, or None."""
+def count_children() -> int:
+    """Windows only: number of direct child processes."""
 
 class ResourceSnapshot:
     rss_bytes: int

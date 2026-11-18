@@ -18,10 +18,11 @@ if TYPE_CHECKING:
 from proctrace.core.exceptions import ConfigurationError
 from proctrace.diagnostics.dump import _do_dump, do_dump
 
+# Windows has no SIGUSR1/SIGUSR2/SIGALRM, so the map is empty there.
 SIGNAL_MAP: Final[Mapping[str, int]] = {
-    "SIGUSR1": signal.SIGUSR1,
-    "SIGUSR2": signal.SIGUSR2,
-    "SIGALRM": signal.SIGALRM,
+    name: getattr(signal, name)
+    for name in ("SIGUSR1", "SIGUSR2", "SIGALRM")
+    if hasattr(signal, name)
 }
 
 _active_handlers: dict[int, SignalHandlerHandle] = {}
@@ -125,6 +126,11 @@ def install_signal_handler(
     Returns:
         SignalHandlerHandle allowing scoped context management and clean uninstallation.
     """
+    if sys.platform == "win32":
+        raise ConfigurationError(
+            "Signal-triggered dumps rely on POSIX signals and are not supported on Windows."
+        )
+
     from proctrace._proctrace_core import register_signal_pipe
 
     signal_num = SIGNAL_MAP.get(sig)

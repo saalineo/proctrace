@@ -2,10 +2,15 @@ import asyncio
 import io
 import os
 import signal
+import sys
 import time
 
 import pytest
 import proctrace
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="requires POSIX signals"
+)
 
 
 def test_install_signal_handler_does_not_raise():

@@ -101,6 +101,7 @@ class TestCmdRun:
 # cmd_dump
 # ──────────────────────────────────────────────────────────────────────────────
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX signals")
 class TestCmdDump:
     def test_dump_self_exits_0(self, capsys):
         """Sending SIGUSR1 to our own PID should succeed (we handle it or ignore it)."""
@@ -303,6 +304,7 @@ class TestMainIntegration:
         data = json.loads(out)
         assert data["exit_code"] == 0
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX signals")
     def test_dump_self(self):
         import subprocess as _sp
         # Spawn a long-lived subprocess that ignores SIGUSR1 so the signal is safe.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import pytest
 import queue
 import signal
 import subprocess
@@ -83,6 +84,7 @@ class TestDecoratorIntegration:
         assert async_allocate.last_probe_result is not None
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX signals")
 class TestSignalHandlerIntegration:
     def test_sigusr1_triggers_thread_dump(self, tmp_path):
         output_file = str(tmp_path / "dump.txt")

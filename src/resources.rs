@@ -12,11 +12,17 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
+#[cfg(windows)]
+mod windows;
+
 #[cfg(target_os = "linux")]
 use linux as backend;
 
 #[cfg(target_os = "macos")]
 use macos as backend;
+
+#[cfg(windows)]
+use windows as backend;
 
 /// Byte-level resource usage of this process at a single instant.
 /// Timestamps are Unix nanoseconds so callers can compute deltas.
@@ -151,17 +157,17 @@ pub(crate) fn now_ns() -> u64 {
         .as_nanos() as u64
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub fn snapshot() -> Result<ResourceSnapshot, ProctraceError> {
     backend::snapshot()
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn snapshot() -> Result<ResourceSnapshot, ProctraceError> {
     Err(ProctraceError::UnsupportedPlatform)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub fn snapshot_extended(
     cpu: bool,
     io: bool,
@@ -171,7 +177,7 @@ pub fn snapshot_extended(
     backend::snapshot_extended(cpu, io, sockets, threads_cpu)
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn snapshot_extended(
     _cpu: bool,
     _io: bool,
@@ -181,14 +187,24 @@ pub fn snapshot_extended(
     Err(ProctraceError::UnsupportedPlatform)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub fn list_fd_paths() -> Result<Vec<String>, ProctraceError> {
     backend::list_fd_paths()
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn list_fd_paths() -> Result<Vec<String>, ProctraceError> {
     Err(ProctraceError::UnsupportedPlatform)
+}
+
+#[cfg(windows)]
+pub fn snapshot_pid(pid: u32) -> Option<(u64, u64, u32)> {
+    backend::snapshot_pid(pid)
+}
+
+#[cfg(windows)]
+pub fn count_child_processes() -> u32 {
+    backend::count_child_processes()
 }
 
 #[cfg(test)]

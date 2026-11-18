@@ -15,6 +15,11 @@ pub enum ProctraceError {
         call: &'static str,
         source: std::io::Error,
     },
+    #[error("{call} failed: {source}")]
+    WindowsApi {
+        call: &'static str,
+        source: std::io::Error,
+    },
     #[error("unsupported platform")]
     UnsupportedPlatform,
 }

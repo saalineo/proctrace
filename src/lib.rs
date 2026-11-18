@@ -44,6 +44,20 @@ fn register_signal_pipe(signal_num: i32) -> PyResult<(i32, i32)> {
     signal::register_signal_pipe(signal_num)
 }
 
+/// Windows only: (rss_bytes, vms_bytes, handle_count) for any pid, or None.
+#[cfg(windows)]
+#[pyfunction]
+fn snapshot_pid(pid: u32) -> Option<(u64, u64, u32)> {
+    resources::snapshot_pid(pid)
+}
+
+/// Windows only: number of direct child processes of this process.
+#[cfg(windows)]
+#[pyfunction]
+fn count_children() -> u32 {
+    resources::count_child_processes()
+}
+
 #[pymodule]
 fn _proctrace_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(probe_version, m)?)?;
@@ -52,6 +66,10 @@ fn _proctrace_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(list_open_fds, m)?)?;
     #[cfg(unix)]
     m.add_function(wrap_pyfunction!(register_signal_pipe, m)?)?;
+    #[cfg(windows)]
+    m.add_function(wrap_pyfunction!(snapshot_pid, m)?)?;
+    #[cfg(windows)]
+    m.add_function(wrap_pyfunction!(count_children, m)?)?;
     m.add_class::<ResourceSnapshot>()?;
     m.add_class::<ExtendedResourceSnapshot>()?;
     m.add_class::<BackgroundSampler>()?;
