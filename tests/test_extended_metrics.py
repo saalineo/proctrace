@@ -5,6 +5,7 @@ import socket
 import tempfile
 import threading
 import time
+import sys
 
 import pytest
 from conftest import allocate_dirty_mb
@@ -47,6 +48,9 @@ class TestCpuMetrics:
         assert result is not None
         assert result.minor_faults > 100
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="Windows has no per-process context-switch counter"
+    )
     def test_context_switches(self):
         with proctrace.watch(cpu=True) as probe:
             # Frequent sleeps cause voluntary context switches

@@ -149,7 +149,7 @@ maturin develop --release
 |---|---|---|---|
 | **Linux** | x86_64, aarch64 | **Tier 1 (Complete)** | `/proc/self/statm`, `/proc/self/fd`, `getrusage`, `ioctl(FIONREAD)` |
 | **macOS** | Apple Silicon, x86_64 | **Tier 1 (Complete)** | `mach_task_self()`, `proc_pidinfo()`, `kqueue`, `proc_listpids()` |
-| **Windows** | x64, x86 | **Tier 2 (Beta)** | `GetProcessMemoryInfo`, `GetProcessHandleCount`, `GetProcessTimes`, `GetProcessIoCounters`, `GetExtendedTcpTable`. No signal-triggered dumps (`dump`, `install_signal_handler`); context-switch counts, major faults and `list_open_fds` are unavailable. |
+| **Windows** | x64, x86 | **Tier 2 (Beta)** | `GetProcessMemoryInfo`, `GetProcessHandleCount`, `GetProcessTimes`, `GetProcessIoCounters`, `GetExtendedTcpTable`. No signal-triggered dumps (`dump`, `install_signal_handler`); context-switch counts and major faults are unavailable, and `list_open_fds` reports file, pipe and console handles only. |
 
 ---
 

@@ -4,14 +4,21 @@
 //! - `open_fds` reports the process handle count.
 //! - Windows exposes a single page-fault counter, reported as `minor_faults`.
 //! - Per-process context-switch counts have no cheap API and are left at 0.
-//! - `list_fd_paths` is not implemented and returns an empty list.
+//! - `list_fd_paths` lists file, pipe and console handles (not events, mutexes, etc.).
+//! - `vms_bytes` is private committed memory, floored at the working set so that
+//!   `vms >= rss` holds (the working set includes shared pages that private commit omits).
 
 use crate::error::ProctraceError;
 use crate::resources::{now_ns, ExtendedResourceSnapshot, ResourceSnapshot};
 use std::collections::HashMap;
 use std::mem::{size_of, zeroed};
 
-use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, INVALID_HANDLE_VALUE, NO_ERROR};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetHandleInformation, FILETIME, HANDLE, INVALID_HANDLE_VALUE, NO_ERROR,
+};
+use windows_sys::Win32::Storage::FileSystem::{
+    GetFileType, GetFinalPathNameByHandleW, FILE_TYPE_CHAR, FILE_TYPE_DISK, FILE_TYPE_PIPE,
+};
 use windows_sys::Win32::NetworkManagement::IpHelper::{
     GetExtendedTcpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCPROW_OWNER_PID, TCP_TABLE_OWNER_PID_ALL,
 };
@@ -58,6 +65,10 @@ fn memory_counters() -> Result<PROCESS_MEMORY_COUNTERS_EX, ProctraceError> {
     Ok(pmc)
 }
 
+fn vms_bytes(pmc: &PROCESS_MEMORY_COUNTERS_EX) -> u64 {
+    (pmc.PrivateUsage as u64).max(pmc.WorkingSetSize as u64)
+}
+
 fn handle_count() -> Result<u32, ProctraceError> {
     let mut count: u32 = 0;
     if unsafe { GetProcessHandleCount(GetCurrentProcess(), &mut count) } == 0 {
@@ -71,7 +82,7 @@ pub fn snapshot() -> Result<ResourceSnapshot, ProctraceError> {
     Ok(ResourceSnapshot {
         rss_bytes: pmc.WorkingSetSize as u64,
         // PrivateUsage is the committed private memory, the closest analogue of VmSize.
-        vms_bytes: pmc.PrivateUsage as u64,
+        vms_bytes: vms_bytes(&pmc),
         open_fds: handle_count()?,
         timestamp_ns: now_ns(),
     })
@@ -86,7 +97,7 @@ pub fn snapshot_extended(
     let pmc = memory_counters()?;
     let mut ext = ExtendedResourceSnapshot {
         rss_bytes: pmc.WorkingSetSize as u64,
-        vms_bytes: pmc.PrivateUsage as u64,
+        vms_bytes: vms_bytes(&pmc),
         open_fds: handle_count()?,
         timestamp_ns: now_ns(),
         ..Default::default()
@@ -154,7 +165,7 @@ pub fn snapshot_pid(pid: u32) -> Option<(u64, u64, u32)> {
     if ok == 0 {
         return None;
     }
-    Some((pmc.WorkingSetSize as u64, pmc.PrivateUsage as u64, handles))
+    Some((pmc.WorkingSetSize as u64, vms_bytes(&pmc), handles))
 }
 
 /// Number of direct child processes of the current process.
@@ -178,9 +189,61 @@ pub fn count_child_processes() -> u32 {
     count
 }
 
-/// Windows has no cheap, stable way to enumerate handle paths; see module docs.
+/// Strip the `\\?\` / `\\?\UNC\` prefixes GetFinalPathNameByHandle adds.
+fn normalize_path(raw: &str) -> String {
+    if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = raw.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        raw.to_string()
+    }
+}
+
+fn disk_handle_path(h: HANDLE) -> Option<String> {
+    let mut buf = vec![0u16; 1024];
+    loop {
+        let n = unsafe { GetFinalPathNameByHandleW(h, buf.as_mut_ptr(), buf.len() as u32, 0) };
+        if n == 0 {
+            return None;
+        }
+        if (n as usize) < buf.len() {
+            return Some(normalize_path(&String::from_utf16_lossy(&buf[..n as usize])));
+        }
+        buf.resize(n as usize + 1, 0);
+    }
+}
+
+/// Enumerate this process's file, pipe and console handles.
+///
+/// Handle values are small multiples of 4, so valid ones are found by probing
+/// candidates until `GetProcessHandleCount` handles have been seen. Other kernel
+/// objects (events, mutexes, threads) are counted but not reported.
 pub fn list_fd_paths() -> Result<Vec<String>, ProctraceError> {
-    Ok(Vec::new())
+    const MAX_HANDLE_VALUE: usize = 1 << 22;
+    let total = handle_count()? as usize;
+    let mut paths = Vec::new();
+    let mut seen = 0usize;
+    let mut value = 4usize;
+    while seen < total && value <= MAX_HANDLE_VALUE {
+        let h = value as HANDLE;
+        let mut flags = 0u32;
+        if unsafe { GetHandleInformation(h, &mut flags) } != 0 {
+            seen += 1;
+            match unsafe { GetFileType(h) } {
+                FILE_TYPE_DISK => {
+                    if let Some(p) = disk_handle_path(h) {
+                        paths.push(p);
+                    }
+                }
+                FILE_TYPE_PIPE => paths.push(format!("pipe:[{value}]")),
+                FILE_TYPE_CHAR => paths.push(format!("char:[{value}]")),
+                _ => {}
+            }
+        }
+        value += 4;
+    }
+    Ok(paths)
 }
 
 fn collect_thread_cpu() -> Vec<(u64, String, u64, u64)> {
@@ -343,6 +406,26 @@ mod tests {
         assert!(rss > 0);
         assert!(handles > 0);
         assert!(snapshot_pid(0xFFFF_FFF0).is_none());
+    }
+
+    #[test]
+    fn lists_open_file_handles() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("proctrace_fd_probe.tmp");
+        let f = std::fs::File::create(&path).unwrap();
+        let canon = std::fs::canonicalize(&path).unwrap();
+        let canon = normalize_path(&canon.to_string_lossy());
+        let paths = list_fd_paths().unwrap();
+        assert!(paths.iter().any(|p| p.eq_ignore_ascii_case(&canon)));
+        drop(f);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn normalizes_extended_paths() {
+        assert_eq!(normalize_path(r"\\?\C:\a\b"), r"C:\a\b");
+        assert_eq!(normalize_path(r"\\?\UNC\srv\share"), r"\\srv\share");
+        assert_eq!(normalize_path(r"C:\x"), r"C:\x");
     }
 
     #[test]
