@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import os
 import socket as _socket
 import struct
@@ -11,12 +10,15 @@ from collections import deque
 from typing import TYPE_CHECKING, Any, Final
 
 try:
+    import fcntl
     import termios
 
     _FIONREAD: Final[int] = getattr(
         termios, "FIONREAD", 0x4004667F if sys.platform == "darwin" else 0x541B
     )
 except ImportError:
+    # Windows has no fcntl/termios; receive-queue depth is reported as 0%.
+    fcntl = None  # type: ignore[assignment]
     _FIONREAD: Final[int] = 0x4004667F if sys.platform == "darwin" else 0x541B
 
 if TYPE_CHECKING:
@@ -147,7 +149,10 @@ class TracedSocket:
         return n
 
     def recv(self, bufsize: int, flags: int = 0) -> bytes:
+        pct = 0
         try:
+            if fcntl is None:
+                raise OSError("FIONREAD unavailable on this platform")
             buf = struct.pack("I", 0)
             result = fcntl.ioctl(self._sock.fileno(), _FIONREAD, buf)
             waiting = struct.unpack("I", result)[0]

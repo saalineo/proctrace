@@ -94,8 +94,11 @@ class TestThreadTracking:
                 threads.append(t)
             time.sleep(0.05)
 
-        assert probe.result.thread_delta >= 3
+        # thread_delta is a net count and can be lowered by unrelated threads
+        # exiting mid-block, so assert on the threads this test created.
         names = probe.result.new_thread_names
+        assert {"W0", "W1", "W2"} <= set(names)
+        assert probe.result.thread_delta >= 1
         assert any(n.startswith("W") for n in names)
 
     def test_no_false_positive_on_existing_threads(self):
